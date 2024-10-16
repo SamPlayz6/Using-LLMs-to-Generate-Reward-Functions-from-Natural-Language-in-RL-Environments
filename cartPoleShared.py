@@ -150,6 +150,8 @@ def train(agent, env, episodes=500):
 #API Query -------------------------------------------
 
 import anthropic
+import datetime
+import json
 
 def queryAnthropicApi(api_key, model_name, messages, max_tokens=1024):
     # Initialize the client with the given API key
@@ -176,3 +178,20 @@ def queryAnthropicExplanation(api_key, model_name, explanation_message, max_toke
     )
     
     return explanationResponse.content[0].text
+
+
+def logClaudeCall(rewardPrompt, rewardResponse, explanationPrompt, explanationResponse, logFile='claude_calls.jsonl'):
+    log_entry = {
+        'timestamp': datetime.datetime.now().isoformat(),
+        'reward_function': {
+            'prompt': rewardPrompt,
+            'response': rewardResponse
+        },
+        'explanation': {
+            'prompt': explanationPrompt,
+            'response': explanationResponse
+        }
+    }
+    
+    with open(logFile, 'a') as f:
+        f.write(json.dumps(log_entry) + '\n')
