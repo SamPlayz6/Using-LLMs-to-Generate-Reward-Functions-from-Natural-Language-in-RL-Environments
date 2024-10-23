@@ -22,25 +22,18 @@ def angleBasedReward(observation, action):
 import re
 
 def extractFunctionCode(responseString):
-    startKeyword = "```python"
-    endKeyword = "```"
+    # Updated pattern to match from the first 'def' to the end of the string
+    function_pattern = r"(def\s+dynamicRewardFunction\(.*\):[\s\S]*)"
+    match = re.search(function_pattern, responseString)
 
-    startIdx = responseString.find(startKeyword)
-    if startIdx == -1:
-        raise ValueError("No Python code block found in the response.")
+    if not match:
+        raise ValueError("No valid function definition found in the response.")
 
-    # Find the index after '```python' to extract the actual function code
-    startIdx += len(startKeyword)
+    functionString = match.group(1)
+    return functionString.strip()
 
-    # Find the end of the code block
-    endIdx = responseString.find(endKeyword, startIdx)
-    if endIdx == -1:
-        raise ValueError("Code block not properly closed with '```'.")
 
-    # Extract the code between the delimiters
-    functionString = responseString[startIdx:endIdx].strip()
 
-    return functionString
 
 
 
@@ -95,22 +88,34 @@ class CustomCartPoleEnv(gym.Wrapper):
     def angleBasedReward(self, observation, action):
         _, _, angle, _ = observation
         return np.cos(angle)
+    
+    
 
     def LLMRewardFunction(self, functionString):
         localNamespace = {}
-        exec(functionString, globals(), localNamespace)
-        
-        new_function = None
-        for item in localNamespace.values():
-            if callable(item):
-                new_function = item
-                break
-        
-        if new_function is None:
-            raise ValueError("Invalid Function")
-        
-        # Set the new function as the reward function
-        self.setRewardFunction(new_function)
+        try:
+            # Execute the function code in the given namespace
+            exec(functionString, globals(), localNamespace)
+
+            # Search for a callable function in the local namespace
+            new_function = None
+            for item in localNamespace.values():
+                if callable(item):
+                    new_function = item
+                    break
+
+            if new_function is None:
+                raise ValueError("Extracted function is not callable.")
+
+            # Set the new function as the reward function
+            self.setRewardFunction(new_function)
+            print("Reward function successfully updated.")
+
+        except Exception as e:
+            print(f"Failed to execute function string: {e}")
+            # Ensure fallback to default reward function in case of an error
+            self.setRewardFunction(self.angleBasedReward)
+
 
 # --
 
@@ -206,6 +211,9 @@ class DQLearningAgent:
 
             # Clone the state tensor and get the target for the action taken
             targetTensor = self.model(stateTensor).detach().clone()
+            
+            # Convert the target to a torch tensor and move it to the correct device
+            target = torch.tensor(target, dtype=torch.float32).to(self.device)
             targetTensor[action] = target
 
             # Update model
