@@ -65,77 +65,91 @@ def setRewardFunction(functionString):
 
 
 class CustomCartPoleEnv(gym.Wrapper):
-    def __init__(self, env):
+    def __init__(self, env, num_components=None):
         super().__init__(env)
         self.env = env
         self.rewardFunction = self.angleBasedReward
+        
+        # Add component tracking without breaking existing functionality
+        self.using_components = bool(num_components)
+        self.reward_components = {}
+        if self.using_components:
+            for i in range(1, num_components + 1):
+                self.reward_components[f'reward_function_{i}'] = None
 
     def step(self, action):
         observation, _, terminated, truncated, info = self.env.step(action)
-        # Ensure rewardFunction is callable, otherwise fallback to default
-        if self.rewardFunction is None or not callable(self.rewardFunction):
-            print("Warning: rewardFunction is None or not callable. Using default reward function.")
-            self.rewardFunction = self.angleBasedReward
-        # Calculate reward
-        reward = self.rewardFunction(observation, action)
+        
+        # Add component rewards to info without changing core functionality
+        if self.using_components and any(self.reward_components.values()):
+            # Calculate component rewards
+            info['component_rewards'] = {}
+            rewards = []
+            for name, func in self.reward_components.items():
+                if func and callable(func):
+                    component_reward = func(observation, action)
+                    rewards.append(component_reward)
+                    info['component_rewards'][name] = component_reward
+            reward = sum(rewards) / len(rewards) if rewards else self.rewardFunction(observation, action)
+        else:
+            # Original behavior
+            if self.rewardFunction is None or not callable(self.rewardFunction):
+                print("Warning: rewardFunction is None or not callable. Using default reward function.")
+                self.rewardFunction = self.angleBasedReward
+            reward = self.rewardFunction(observation, action)
+            
         return observation, reward, terminated, truncated, info
 
+    # Add new methods for component handling
+    def set_component_reward(self, component_number: int, reward_function):
+        """Set a specific component reward function."""
+        if self.using_components:
+            func_name = f'reward_function_{component_number}'
+            if func_name in self.reward_components:
+                self.reward_components[func_name] = reward_function
+                # If it's the first component, also set it as main reward function for compatibility
+                if component_number == 1:
+                    self.rewardFunction = reward_function
+            return True
+        return False
 
-
-# --
-
-
+    # Keep all existing methods unchanged
     def angleBasedReward(self, observation, action):
         _, _, angle, _ = observation
         return np.cos(angle)
-    
-    
 
     def LLMRewardFunction(self, functionString):
+        # Keep existing implementation
         localNamespace = {}
         try:
-            # Execute the function code in the given namespace
             exec(functionString, globals(), localNamespace)
-
-            # Search for a callable function in the local namespace
             new_function = None
             for item in localNamespace.values():
                 if callable(item):
                     new_function = item
                     break
-
             if new_function is None:
                 raise ValueError("Extracted function is not callable.")
-
-            # Set the new function as the reward function
             self.setRewardFunction(new_function)
             print("Reward function successfully updated.")
-
         except Exception as e:
             print(f"Failed to execute function string: {e}")
-            # Ensure fallback to default reward function in case of an error
             self.setRewardFunction(self.angleBasedReward)
 
-
-# --
-
     def setRewardFunction(self, rewardFunction):
+        # Keep existing implementation
         self.rewardFunction = rewardFunction
 
-
-    #dynamically update environment parameters
     def setEnvironmentParameters(self, masscart=1.0, length=1.0, gravity=9.8):
-        self.env.masscart = masscart  # Example to change mass of cart
-        self.env.length = length  # Example to change length of pole
-        self.env.gravity = gravity  # Example to change gravity
+        # Keep existing implementation
+        self.env.masscart = masscart
+        self.env.length = length
+        self.env.gravity = gravity
         print(f"Environment parameters updated: masscart={masscart}, length={length}, gravity={gravity}")
 
-        
-    #update reward function dynamically
     def updateRewardFunction(self, functionString):
-
+        # Keep existing implementation
         print("updateReward Function: " + functionString)
-
         try:
             newFunction = setRewardFunction(functionString)
             if newFunction and callable(newFunction):
@@ -145,9 +159,7 @@ class CustomCartPoleEnv(gym.Wrapper):
                 raise ValueError("Extracted function is not callable.")
         except Exception as e:
             print(f"Failed to update reward function: {e}")
-            # Ensure fallback to default
             self.setRewardFunction(self.angleBasedReward)
-
 
 # Deep Q-Learning Agent -------------------------------------------
 
