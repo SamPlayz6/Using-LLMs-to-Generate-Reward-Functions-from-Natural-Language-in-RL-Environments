@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Project specific
+*.pth 
+api_keys.yaml 
+
