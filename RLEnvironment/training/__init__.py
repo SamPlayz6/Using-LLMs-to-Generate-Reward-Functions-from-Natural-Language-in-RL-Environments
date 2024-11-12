@@ -1,4 +1,4 @@
 from .training import trainDQLearning
-from .agents import DQLearningAgent
+from .agent import DQLearningAgent
 
 __all__ = ['trainDQLearning', 'DQLearningAgent']

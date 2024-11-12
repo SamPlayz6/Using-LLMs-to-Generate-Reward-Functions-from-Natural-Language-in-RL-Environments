@@ -51,3 +51,53 @@ class RewardFunctionWrapper:
         except Exception as e:
             print(f"Failed to update reward function: {e}")
             self.setRewardFunction(self.angleBasedReward)
+
+
+import re
+
+def extractFunctionCode(responseString):
+    # Updated pattern to match from the first 'def' to the end of the string
+    function_pattern = r"(def\s+dynamicRewardFunction\(.*\):[\s\S]*)"
+    match = re.search(function_pattern, responseString)
+
+    if not match:
+        raise ValueError("No valid function definition found in the response.")
+
+    functionString = match.group(1)
+    return functionString.strip()
+
+
+def setRewardFunction(functionString):
+    localNamespace = {}
+    try:
+        # Extract function code from response string
+        functionCode = extractFunctionCode(functionString)  # Extract only the function
+        exec(functionCode, globals(), localNamespace)
+    except Exception as e:
+        raise ValueError(f"Failed to execute function string: {e}")
+
+    newFunction = None
+    for item in localNamespace.values():
+        if callable(item):
+            newFunction = item
+            break
+
+    if newFunction is None:
+        raise ValueError("No valid function was extracted from the response.")
+    
+    return newFunction
+
+
+# -- Adaptive Reward Function
+def updateRewardFunction(env, updateSystem, episode):
+    print(f"\nAttempting reward function update at episode {episode}")
+    funcName = f'rewardFunction_{updateSystem.targetComponent}'
+    currentFunc = env.rewardComponents[funcName]
+    newFunction, updated = updateSystem.validateAndUpdate(currentFunc)
+
+    if updated:
+        print(f"\nUpdating reward component {updateSystem.targetComponent}...")
+        env.setComponentReward(updateSystem.targetComponent, newFunction)
+        updateSystem.lastUpdateEpisode = episode
+    else:
+        print("\nKeeping current reward function.")

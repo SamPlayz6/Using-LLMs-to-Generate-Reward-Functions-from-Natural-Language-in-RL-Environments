@@ -11,7 +11,11 @@ def extractFunctionCode(responseString):
     functionString = match.group(1)
     return functionString.strip()
 
-
+import matplotlib.pyplot as plt
+import time
+import base64
+from collections import deque
+import io
 
 class RewardUpdateSystem:
     def __init__(self, apiKey: str, modelName: str, maxHistoryLength: int = 100, target_component: int = 1):
@@ -104,6 +108,10 @@ class RewardUpdateSystem:
             
             print("\nGetting critic's evaluation...")
             criticPrompt = self.createCriticPrompt(proposedFunction)
+
+            #queryAnthropicApi
+            from AdaptiveRewardFunctionLearning.Prompts.APIQuery import queryAnthropicApi
+            
             criticResponse = queryAnthropicApi(self.apiKey, self.modelName, criticPrompt)
             
             print("\nCritic Response:")

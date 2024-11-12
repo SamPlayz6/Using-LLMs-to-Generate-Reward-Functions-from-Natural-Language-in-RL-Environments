@@ -1,21 +1,27 @@
 from collections import deque
 import numpy as np
 
-def trainDQLearning(agent, env, episodes=500):
+def trainDQLearning(agent, env, updateSystem, num_episodes, on_episode_end=None):
     rewards = []
-    for episode in range(episodes):
+    for episode in range(num_episodes):
         observation = env.reset()[0]
-        totalReward = 0
+        total_reward = 0
         done = False
 
         while not done:
             action = agent.chooseAction(observation)
-            nextObservation, reward, done, _, _ = env.step(action)
-            totalReward += reward
-            agent.remember(observation, action, reward, nextObservation, done)
-            observation = nextObservation
+            next_observation, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            total_reward += reward
 
-        rewards.append(totalReward)
-        agent.replay()
+            agent.remember(observation, action, reward, next_observation, done)
+            observation = next_observation
 
-    return rewards
+        rewards.append(total_reward)
+
+        if on_episode_end:
+            on_episode_end(env, updateSystem, episode)
+
+        agent.replay(32)
+
+    return agent, env, rewards

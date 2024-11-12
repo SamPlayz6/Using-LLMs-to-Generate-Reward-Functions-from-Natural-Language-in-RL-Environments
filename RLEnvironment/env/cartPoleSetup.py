@@ -23,3 +23,9 @@ class CustomCartPoleEnv(gym.Wrapper):
         self.env.length = length
         self.env.gravity = gravity
         print(f"Environment parameters updated: masscart={masscart}, length={length}, gravity={gravity}")
+
+
+    def setRewardFunction(self, rewardFunction):
+        self.rewardFunction = rewardFunction
+
+
