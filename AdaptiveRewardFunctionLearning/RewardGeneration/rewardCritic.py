@@ -160,6 +160,52 @@ class RewardUpdateSystem:
             print(f"\nError during update: {e}")
             return currentFunction, False
 
-    def waitingTime(self, episode: int):
-        UPDATE_INTERVAL = 100
-        return episode - self.lastUpdateEpisode >= UPDATE_INTERVAL
+
+# ----- Watining Time Function
+
+
+# def waitingTime(componentName, metrics, lastUpdateEpisode,threshold):
+#     """
+#     Determines if a specific reward component should be updated
+    
+#     Parameters:
+#         componentName: Which component (angle, velocity, position)
+#         metrics: Dictionary containing recent performance metrics
+#         lastUpdateEpisode: When this component was last updated
+#     """
+#     currentEpisode = metrics['currentEpisode']
+#     timeSinceUpdate = currentEpisode - lastUpdateEpisode
+    
+#     # Get recent performance trends
+#     recentRewards = metrics['recentRewards']  # last N episodes
+#     rewardDerivative = np.gradient(recentRewards)  # Rate of change
+    
+#     # Calculate stability score
+#     avgStandTime = metrics['averageBalanceTime']
+#     standTimeVariance = metrics['balanceTimeVariance']
+    
+#     # Conditions for update:
+#     # 1. Minimum time between updates (prevent too frequent changes)
+#     if timeSinceUpdate < 50:  # Example threshold
+#         return False
+        
+#     # 2. Performance has plateaued or declining
+#     if np.mean(rewardDerivative[-10:]) <= 0:  # Check recent trend
+#         return True
+        
+#     # 3. High variance in standing time (unstable performance)
+#     if standTimeVariance > threshold:
+#         return True
+    
+#     return False
+
+
+    def waitingTime(componentName, metrics, lastUpdateEpisode,threshold):
+        currentEpisode = metrics['currentEpisode']
+        timeSinceUpdate = currentEpisode - lastUpdateEpisode
+        print(timeSinceUpdate + " : Testing ")
+
+        if timeSinceUpdate > 52:
+            return True
+        else:
+            return False

@@ -19,13 +19,17 @@ def trainDQLearning(agent, env, numEpisodes, updateSystem=None, onEpisodeEnd=Non
             agent.remember(observation, action, reward, nextObservation, done)
             observation = nextObservation
 
+        # Update weights using environment's reward function
+        if hasattr(env.rewardFunction, 'updateWeightsAfterEpisode'):
+            env.rewardFunction.updateWeightsAfterEpisode()
+
         if updateSystem:
             updateSystem.recordEpisode(info, steps, totalReward)
 
         rewards.append(totalReward)
 
         if onEpisodeEnd:
-            onEpisodeEnd(env, updateSystem, episode)
+            onEpisodeEnd(env, updateSystem, episode, totalReward, steps)
 
         agent.replay(32)
 
