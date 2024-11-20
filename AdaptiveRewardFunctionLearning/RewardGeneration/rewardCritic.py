@@ -164,48 +164,91 @@ class RewardUpdateSystem:
 # ----- Watining Time Function
 
 
-# def waitingTime(componentName, metrics, lastUpdateEpisode,threshold):
-#     """
-#     Determines if a specific reward component should be updated
-    
-#     Parameters:
-#         componentName: Which component (angle, velocity, position)
-#         metrics: Dictionary containing recent performance metrics
-#         lastUpdateEpisode: When this component was last updated
-#     """
-#     currentEpisode = metrics['currentEpisode']
-#     timeSinceUpdate = currentEpisode - lastUpdateEpisode
-    
-#     # Get recent performance trends
-#     recentRewards = metrics['recentRewards']  # last N episodes
-#     rewardDerivative = np.gradient(recentRewards)  # Rate of change
-    
-#     # Calculate stability score
-#     avgStandTime = metrics['averageBalanceTime']
-#     standTimeVariance = metrics['balanceTimeVariance']
-    
-#     # Conditions for update:
-#     # 1. Minimum time between updates (prevent too frequent changes)
-#     if timeSinceUpdate < 50:  # Example threshold
-#         return False
+    def waitingTime(self, componentName, metrics, lastUpdateEpisode, threshold=100):
+        """
+        Determines if a specific reward component should be updated
         
-#     # 2. Performance has plateaued or declining
-#     if np.mean(rewardDerivative[-10:]) <= 0:  # Check recent trend
-#         return True
-        
-#     # 3. High variance in standing time (unstable performance)
-#     if standTimeVariance > threshold:
-#         return True
-    
-#     return False
-
-
-    def waitingTime(componentName, metrics, lastUpdateEpisode,threshold):
+        Parameters:
+            componentName: Which component (angle, velocity, position)
+            metrics: Dictionary containing recent performance metrics
+            lastUpdateEpisode: When this component was last updated
+            threshold: Variance threshold for stability check
+        """
         currentEpisode = metrics['currentEpisode']
         timeSinceUpdate = currentEpisode - lastUpdateEpisode
-        print(timeSinceUpdate + " : Testing ")
+        
+        # Get recent performance trends
+        recentRewards = metrics['recentRewards']
+        
+        # Calculate stability metrics
+        avgStandTime = metrics['averageBalanceTime']
+        standTimeVariance = metrics['balanceTimeVariance']
+        
+        # Component-specific thresholds
+        if componentName == 'stability':
+            variance_threshold = threshold * 0.8  # More sensitive to variance
+        elif componentName == 'efficiency':
+            variance_threshold = threshold * 1.2  # Less sensitive to variance
+        else:
+            variance_threshold = threshold
+        
+        # Update conditions
+        if timeSinceUpdate < 200:
+            # print("Too soon since last update")
+            return False
+            
+        if len(recentRewards) > 75:
+            rewardDerivative = np.gradient(recentRewards)
+    
+            # Calculate different trend windows
+            short_trend = np.mean(rewardDerivative[-20:])
+            medium_trend = np.mean(rewardDerivative[-40:])
+            
+            # Calculate performance stability
+            current_performance = np.mean(recentRewards[-20:])
+            performance_variance = np.var(recentRewards[-20:])
+            
+            print(f"\nChecking {componentName} component:")
+            print(f"Time since update: {timeSinceUpdate}")
+            print(f"Short-term trend: {short_trend:.3f}")
+            print(f"Medium-term trend: {medium_trend:.3f}")
+            print(f"Performance variance: {performance_variance:.3f}")
+            
+            # Different conditions for updates:
+            should_update = False
+            
+            # 1. Major performance drop with high variance
+            if timeSinceUpdate >= 75 and \
+            performance_variance > current_performance * 0.5 and \
+            short_trend > current_performance * 1.2:
+                print("High variance with performance drop detected")
+                should_update = True
+            
+            # 2. Sustained poor performance
+            elif timeSinceUpdate >= 150 and \
+                short_trend > current_performance * 1.15 and \
+                medium_trend >current_performance * 1.1:
+                print("Sustained performance decline detected")
+                should_update = True
+            
+            return should_update
+            
+        return False
 
-        if timeSinceUpdate > 52:
+
+    # def waitingTime(self,componentName, metrics, lastUpdateEpisode,threshold=0):
+    #     currentEpisode = metrics['currentEpisode']
+    #     timeSinceUpdate = currentEpisode - lastUpdateEpisode
+    #     # print(str(timeSinceUpdate) + " : Testing ")
+
+    #     if timeSinceUpdate > 52:
+    #         return True
+    #     else:
+    #         return False
+        
+
+    def waitingTimeConstant(self,episode, interval):
+        if episode % interval == 0 and episode != 0:
             return True
         else:
             return False

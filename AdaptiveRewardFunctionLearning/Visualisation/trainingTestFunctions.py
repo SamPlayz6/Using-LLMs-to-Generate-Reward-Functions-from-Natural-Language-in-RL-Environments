@@ -96,6 +96,74 @@ def performUpdate(env, updateSystem, episode):
         env.setRewardFunction(newFunction)
         updateSystem.lastUpdateEpisode = episode
 
+
+
+from AdaptiveRewardFunctionLearning.RewardGeneration.rewardCritic import RewardUpdateSystem
+from AdaptiveRewardFunctionLearning.RewardGeneration.rewardCodeGeneration import analyseFailure, updateComponentWeight
+
+def updateCompositeRewardFunction(env, updateSystem, metrics, dynamicRewardFunction):
+    """
+    Updates composite reward function components based on waiting time and performance
+    
+    Args:
+        env: The environment instance
+        updateSystem: System handling LLM updates
+        metrics: Dictionary containing current performance metrics
+        dynamicRewardFunction: The dynamic reward function being used
+    """
+
+    if not hasattr(dynamicRewardFunction, 'weights'):
+        dynamicRewardFunction.weights = {
+        'stability': {'value': 0.33, 'lastUpdate': 0},
+        'efficiency': {'value': 0.33, 'lastUpdate': 0},
+        'time': {'value': 0.34, 'lastUpdate': 0}
+    }
+    dynamicRewardFunction.lastObservation = None
+    dynamicRewardFunction.episodeEnded = False
+    
+    # print(f"\nChecking composite components for updates at episode {metrics['currentEpisode']}")
+    
+    # Check each composite component
+    for componentName in ['stability', 'efficiency', 'time']:
+        # Skip if component doesn't exist in weights
+        if not hasattr(dynamicRewardFunction, 'weights') or componentName not in dynamicRewardFunction.weights:
+            continue
+
+        # print("Makes it through weights existing 1")
+            
+        # Check if this component should be updated
+        if updateSystem.waitingTime(componentName, metrics, 
+                      dynamicRewardFunction.weights[componentName]['lastUpdate'],
+                      threshold=0.5):
+            
+            print(f"\nAttempting to update composite component: {componentName}")
+            
+            # Analyze failure type for weight adjustment
+            failureType = analyseFailure(dynamicRewardFunction.lastObservation)
+            
+            # Update component weight
+            oldWeight = dynamicRewardFunction.weights[componentName]['value']
+            updateComponentWeight(componentName, failureType)
+            newWeight = dynamicRewardFunction.weights[componentName]['value']
+            
+            # Log the update
+            if not hasattr(dynamicRewardFunction, 'compositeHistory'):
+                dynamicRewardFunction.compositeHistory = []
+            
+            dynamicRewardFunction.compositeHistory.append({
+                'component': componentName,
+                'episode': metrics['currentEpisode'],
+                'oldWeight': oldWeight,
+                'newWeight': newWeight,
+                'failureType': failureType,
+                'metrics': metrics.copy()
+            })
+            
+            # Update last update time
+            dynamicRewardFunction.weights[componentName]['lastUpdate'] = metrics['currentEpisode']
+            
+            print(f"Updated {componentName} weight: {oldWeight:.3f} -> {newWeight:.3f}")
+
 from datetime import datetime
 
 

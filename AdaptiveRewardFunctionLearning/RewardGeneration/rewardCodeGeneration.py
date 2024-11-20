@@ -75,8 +75,11 @@ def dynamicRewardFunction(observation, action, metrics=None):
             'efficiency': {'value': 0.33, 'lastUpdate': 0},
             'time': {'value': 0.34, 'lastUpdate': 0}
         }
-        dynamicRewardFunction.lastObservation = None
+        dynamicRewardFunction.lastObservation = observation
         dynamicRewardFunction.episodeEnded = False
+    
+    # Update last observation
+    dynamicRewardFunction.lastObservation = observation
     
     # Get the function strings from createDynamicFunctions
     functionStrings = createDynamicFunctions()
@@ -86,9 +89,6 @@ def dynamicRewardFunction(observation, action, metrics=None):
     exec(functionStrings['stability'], namespace)
     exec(functionStrings['efficiency'], namespace)
     exec(functionStrings['time'], namespace)
-    
-    # Store last observation for failure analysis
-    dynamicRewardFunction.lastObservation = observation
     
     # Get individual rewards using the executed functions
     stability = namespace['stabilityReward'](observation, action)
@@ -104,8 +104,9 @@ def dynamicRewardFunction(observation, action, metrics=None):
 
 
 
-
 def analyseFailure(lastObservation):
+    if lastObservation is None:
+        return 'timeout'  # or some default failure type
     x, xDot, angle, angleDot = lastObservation
     
     if abs(x) > 2.4:  # Position failure
