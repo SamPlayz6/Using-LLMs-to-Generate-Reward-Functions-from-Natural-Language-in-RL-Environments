@@ -95,6 +95,8 @@ def performUpdate(env, updateSystem, episode):
         print("Reward function updated")
         env.setRewardFunction(newFunction)
         updateSystem.lastUpdateEpisode = episode
+        return True 
+    return False   
 
 
 
@@ -168,9 +170,10 @@ from datetime import datetime
 
 
 # Helper function to save plots
-def savePlot(fig, experimentName, configIdx=None, plotType="results"):
-    # Create logs directory if it doesn't exist
-    logs_dir = Path(current_dir).parent.parent / 'logs/RobustnessResults'
+def savePlot(fig, experimentName, subFolder, configIdx=None, plotType="results"):
+
+    # Create logs directory with subfolder if it doesn't exist
+    logs_dir = Path(current_dir).parent.parent / 'logs' / subFolder
     if not os.path.exists(logs_dir):
         os.makedirs(logs_dir)
     
@@ -188,7 +191,8 @@ def savePlot(fig, experimentName, configIdx=None, plotType="results"):
     
     # Save figure
     fig.savefig(filepath, bbox_inches='tight', dpi=300)
-    print(f"Saved plot: {filename}")
+    print(f"Saved plot: {filename} in {subFolder}")
+
 
 
 def plotExperimentResults(rewards, metrics, title):

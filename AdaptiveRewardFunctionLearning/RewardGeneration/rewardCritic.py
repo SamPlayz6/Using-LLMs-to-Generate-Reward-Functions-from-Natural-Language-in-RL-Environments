@@ -165,15 +165,6 @@ class RewardUpdateSystem:
 
 
     def waitingTime(self, componentName, metrics, lastUpdateEpisode, threshold=100):
-        """
-        Determines if a specific reward component should be updated
-        
-        Parameters:
-            componentName: Which component (angle, velocity, position)
-            metrics: Dictionary containing recent performance metrics
-            lastUpdateEpisode: When this component was last updated
-            threshold: Variance threshold for stability check
-        """
         currentEpisode = metrics['currentEpisode']
         timeSinceUpdate = currentEpisode - lastUpdateEpisode
         
