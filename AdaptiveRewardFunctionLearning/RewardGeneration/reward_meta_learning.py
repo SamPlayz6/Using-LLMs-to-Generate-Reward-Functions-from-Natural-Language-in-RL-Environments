@@ -198,22 +198,56 @@ class RewardFunctionMetaLearner:
     def update_reward_network(self, performance):
         """
         Update reward function generator based on performance
-        
+
         Args:
             performance (float): Performance metric
         """
-        # Simple performance-based update
+        # Use absolute value of performance to ensure positive learning rate
+        abs_performance = abs(performance)
+
+        # Simple performance-based update with guaranteed positive learning rate
         optimizer = optim.Adam(
             self.reward_function_network.parameters(),
-            lr=0.001 * performance
+            lr=0.001 * abs_performance
         )
-        
+
         # Simulate a gradient update
         optimizer.zero_grad()
-        loss = -performance  # Maximize performance
+        loss = torch.tensor(-performance, requires_grad=True)
         loss.backward()
         optimizer.step()
 
+        
+    def recordEpisode(self, info, steps, totalReward):
+        if not hasattr(self, 'episode_history'):
+            self.episode_history = []
+
+        self.episode_history.append({
+            'info': info,
+            'steps': steps,
+            'reward': totalReward
+        })
+        
+        
+    def meta_update(self, trajectories):
+        """
+        Update the reward function based on recent trajectories
+
+        Args:
+            trajectories (list): List of recent trajectories
+
+        Returns:
+            float: Loss value from the update
+        """
+        # Extract performance from trajectories
+        performance = np.mean([np.mean(traj['rewards']) for traj in trajectories])
+
+        # Update the reward network
+        self.update_reward_network(performance)
+
+        return float(performance)
+        
+        
 # Bayesian Hyperparameter Optimization
 class HyperparameterTuner:
     def __init__(self, meta_learner):

@@ -78,6 +78,18 @@ class EnergyBasedRewardFunction:
         )
         
         return reward
+    
+    
+    def recordEpisode(self, info, steps, totalReward):
+        if not hasattr(self, 'performance_history'):
+            self.performance_history = []
+
+        self.performance_history.append({
+            'info': info,
+            'steps': steps,
+            'reward': totalReward,
+            'current_length': self.length
+        })
 
 def explainability_analysis():
     """
