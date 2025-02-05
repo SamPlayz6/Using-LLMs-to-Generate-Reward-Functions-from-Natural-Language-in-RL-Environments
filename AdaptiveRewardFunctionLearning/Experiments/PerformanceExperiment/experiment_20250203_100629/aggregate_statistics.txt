@@ -1,0 +1,25 @@
+Aggregate Statistics:
+
+adaptivereward:
+finalavgreward: 115.00 ± 118.18
+finalavgbalance: 115.21 ± 118.14
+convergencetime: 914.00 ± 224.80
+stability: 0.67 ± 0.25
+
+meta_learning:
+finalavgreward: 10.68 ± 8.68
+finalavgbalance: 51.32 ± 36.60
+convergencetime: 10000.00 ± 0.00
+stability: 0.28 ± 0.47
+
+energy_based:
+finalavgreward: 209.99 ± 258.37
+finalavgbalance: 291.14 ± 147.83
+convergencetime: 3384.25 ± 1764.21
+stability: 0.35 ± 0.42
+
+baseline:
+finalavgreward: 197.87 ± 160.17
+finalavgbalance: 197.87 ± 160.17
+convergencetime: 664.75 ± 19.26
+stability: 0.47 ± 0.41
