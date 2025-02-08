@@ -21,19 +21,38 @@ class RewardFunctionMetaLearner:
         # Parameterized reward function generator
         self.reward_function_network = self.create_reward_network()
         
-        # Hyperparameter search space
+        # Hyperparameter space
         self.hyperparameter_space = {
             'learning_rate': (1e-4, 1e-2),
             'energy_weights': {
-                'kinetic': (-1, 1),
-                'potential': (-1, 1),
-                'stability': (-1, 1)
+                'kinetic': (-2.0, 2.0),
+                'potential': (-2.0, 2.0),
+                'stability': (-2.0, 2.0),
+                'control': (-1.0, 1.0)
             },
             'regularization': {
                 'l1_strength': (0, 1e-3),
                 'l2_strength': (0, 1e-3)
             }
         }
+        
+        # Initialize current parameters from hyperparameter space
+        self.current_params = {
+            'learning_rate': np.random.uniform(
+                self.hyperparameter_space['learning_rate'][0],
+                self.hyperparameter_space['learning_rate'][1]
+            ),
+            'energy_weights': {
+                k: np.random.uniform(v[0], v[1]) 
+                for k, v in self.hyperparameter_space['energy_weights'].items()
+            },
+            'regularization': {
+                k: np.random.uniform(v[0], v[1])
+                for k, v in self.hyperparameter_space['regularization'].items()
+            }
+        }
+        
+        self.last_avg_length = 0
     
     def create_reward_network(self):
         """
@@ -51,54 +70,40 @@ class RewardFunctionMetaLearner:
         )
     
     def generate_reward_function(self, sample_params=None):
-        """
-        Generate a parameterized reward function
-        
-        Args:
-            sample_params (dict): Optional parameter sampling
-        
-        Returns:
-            Callable: Reward computation function
-        """
+        """Generate reward function with current parameters"""
         if sample_params is None:
-            sample_params = self.sample_hyperparameters()
-        
+            params = self.current_params
+        else:
+            params = sample_params
+    
         def parameterized_reward(state, action):
-            """
-            Flexible reward computation
+            # Get environment parameters if available
+            env_params = getattr(parameterized_reward, 'env_params', {
+                'length': 0.5,
+                'mass_cart': 1.0
+            })
             
-            Args:
-                state (np.ndarray): System state
-                action (np.ndarray): Taken action
+            # Calculate energy-based components with environment scaling
+            length_scale = env_params.get('length', 0.5) / 0.5  # Normalize to default length
             
-            Returns:
-                float: Computed reward
-            """
-            # Neural network based reward computation
-            state_tensor = torch.FloatTensor(state)
-            base_reward = self.reward_function_network(state_tensor).item()
+            kinetic_contrib = params['energy_weights']['kinetic'] * np.sum(state[1::2]**2) * length_scale
+            potential_contrib = params['energy_weights']['potential'] * np.abs(state[2]) * length_scale
+            stability_contrib = params['energy_weights']['stability'] * np.abs(state[3])
             
-            # Energy-based components
-            kinetic_contrib = sample_params['energy_weights']['kinetic'] * np.sum(state[1::2]**2)
-            potential_contrib = sample_params['energy_weights']['potential'] * np.abs(state[2])
-            stability_contrib = sample_params['energy_weights']['stability'] * np.abs(state[3])
+            # Add regularization
+            l1_penalty = params['regularization']['l1_strength'] * np.sum(np.abs(state))
+            l2_penalty = params['regularization']['l2_strength'] * np.sum(state**2)
             
-            # Regularization terms
-            l1_penalty = sample_params['regularization']['l1_strength'] * np.sum(np.abs(state))
-            l2_penalty = sample_params['regularization']['l2_strength'] * np.sum(state**2)
-            
-            # Combined reward
-            total_reward = (
-                base_reward + 
-                kinetic_contrib + 
-                potential_contrib + 
-                stability_contrib - 
-                l1_penalty - 
+            reward = (
+                kinetic_contrib +
+                potential_contrib +
+                stability_contrib -
+                l1_penalty -
                 l2_penalty
             )
             
-            return total_reward
-        
+            return float(reward)
+    
         return parameterized_reward
     
     def sample_hyperparameters(self):
@@ -230,22 +235,57 @@ class RewardFunctionMetaLearner:
         
         
     def meta_update(self, trajectories):
-        """
-        Update the reward function based on recent trajectories
-
-        Args:
-            trajectories (list): List of recent trajectories
-
-        Returns:
-            float: Loss value from the update
-        """
-        # Extract performance from trajectories
-        performance = np.mean([np.mean(traj['rewards']) for traj in trajectories])
-
-        # Update the reward network
-        self.update_reward_network(performance)
-
-        return float(performance)
+        """Enhanced meta-update using full trajectory information"""
+        
+        # Extract performance metrics
+        performances = []
+        state_transitions = []
+        env_params = []
+        
+        for trajectory in trajectories:
+            # Get environment context
+            env_params.append(trajectory['env_params'])
+            
+            # Calculate trajectory performance metrics
+            performance = {
+                'episode_length': trajectory['episode_length'],
+                'total_reward': trajectory['total_reward']
+            }
+            performances.append(performance)
+            
+            # Extract state transitions
+            for state_data in trajectory['states']:
+                state_transitions.append({
+                    'state': state_data[0],
+                    'action': state_data[1],
+                    'reward': state_data[2],
+                    'next_state': state_data[3]
+                })
+    
+        # Update reward parameters based on performance
+        avg_episode_length = np.mean([p['episode_length'] for p in performances])
+        avg_total_reward = np.mean([p['total_reward'] for p in performances])
+        
+        # Adjust weights based on performance
+        for param_name in self.hyperparameter_space['energy_weights']:
+            current_value = self.current_params['energy_weights'][param_name]
+            # Increase weight if performance improved
+            if avg_episode_length > self.last_avg_length:
+                self.current_params['energy_weights'][param_name] *= 1.1
+            else:
+                self.current_params['energy_weights'][param_name] *= 0.9
+                
+            # Keep within bounds
+            self.current_params['energy_weights'][param_name] = np.clip(
+                self.current_params['energy_weights'][param_name],
+                self.hyperparameter_space['energy_weights'][param_name][0],
+                self.hyperparameter_space['energy_weights'][param_name][1]
+            )
+        
+        # Store performance for next update
+        self.last_avg_length = avg_episode_length
+        
+        return avg_total_reward
         
         
 # Bayesian Hyperparameter Optimization

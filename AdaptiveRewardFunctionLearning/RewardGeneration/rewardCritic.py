@@ -117,13 +117,25 @@ class RewardUpdateSystem:
             End your response with EXACTLY one line containing only "Decision: Yes" or "Decision: No"."""
         }]
         
-    def recordEpisode(self, info: dict, steps: int, totalReward: float):
-        """Record both reward and episode information"""
-        if 'componentRewards' in info:
-            componentReward = info['componentRewards'].get(f'rewardFunction{self.targetComponent}')
-            if componentReward is not None:
-                self.rewardHistory.append(componentReward)
-                self.episodeLengths.append(steps)
+    def recordEpisode(self, info, steps, totalReward):
+        """Record episode information and maintain debug metrics"""
+        if not hasattr(self, 'episode_history'):
+            self.episode_history = []
+        
+        # Store episode information
+        self.episode_history.append({
+            'info': info,
+            'steps': steps,
+            'reward': totalReward,
+            'episode': len(self.episode_history)  # Add episode counter
+        })
+        
+        # Debug print every 1000 episodes
+        if len(self.episode_history) % 1000 == 0:
+            print(f"\nDebug Metrics at episode {len(self.episode_history)}:")
+            print(f"Recent average reward: {np.mean([e['reward'] for e in self.episode_history[-100:]]):.2f}")
+            print(f"Recent average steps: {np.mean([e['steps'] for e in self.episode_history[-100:]]):.2f}")
+            print(f"Last update episode: {self.lastUpdateEpisode}")
         
     def validateAndUpdate(self, currentFunction: str):
         try:
@@ -228,11 +240,20 @@ class RewardUpdateSystem:
 
 
     def waitingTime(self, componentName, metrics, lastUpdateEpisode, threshold=5000):
+        """
+        Determine if it's time to update the reward function
+        """
         currentEpisode = metrics['currentEpisode']
         timeSinceUpdate = currentEpisode - lastUpdateEpisode
         
         # Only return True at exact intervals
-        if currentEpisode % threshold == 0 and currentEpisode != 0:  # Add check for non-zero
-            print(f"Checking for update at episode {currentEpisode}, time since last update: {timeSinceUpdate}")
-            return True
-        return False
+        should_update = (currentEpisode % threshold == 0 and currentEpisode != 0)
+        
+        # Only print debug info when we're actually updating or at major intervals
+        if should_update or currentEpisode % 2000 == 0:
+            print(f"\nChecking for update at episode {currentEpisode}, time since last update: {timeSinceUpdate}")
+        
+        if should_update:
+            print(f"✓ Update triggered at episode {currentEpisode}")
+        
+        return should_update
