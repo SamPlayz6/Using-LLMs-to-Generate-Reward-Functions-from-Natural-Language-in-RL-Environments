@@ -54,27 +54,24 @@ class EnergyBasedRewardFunction:
     
     def compute_reward(self, state, action):
         """
-        Reward function based on energy components
-        
-        Objectives:
-        1. Minimize total energy
-        2. Maintain upright position
-        3. Minimize control effort
+        Reward function based on energy components with adaptive weighting
         """
-        # Compute energy components
         kinetic_energy = self.compute_kinetic_energy(state)
         potential_energy = self.compute_potential_energy(state)
         
-        # Stability terms
-        angle_penalty = abs(state[2])  # Deviation from vertical
-        velocity_penalty = state[1]**2 + state[3]**2  # Total velocity
+        # Stability terms with length-based weighting
+        angle_penalty = abs(state[2])
+        velocity_penalty = state[1]**2 + state[3]**2
         
-        # Combine energy and stability terms
+        # Dynamic weights based on pole length
+        angle_weight = 0.2 * (self.length/0.5)  # Increases with pole length
+        velocity_weight = 0.1 * (0.5/self.length)  # Decreases with pole length
+        
         reward = -(
             kinetic_energy + 
             potential_energy + 
-            0.1 * angle_penalty + 
-            0.05 * velocity_penalty
+            angle_weight * angle_penalty + 
+            velocity_weight * velocity_penalty
         )
         
         return reward

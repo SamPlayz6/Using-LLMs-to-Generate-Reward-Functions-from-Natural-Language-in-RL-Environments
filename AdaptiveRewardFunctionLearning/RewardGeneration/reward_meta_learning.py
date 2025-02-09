@@ -70,36 +70,35 @@ class RewardFunctionMetaLearner:
         )
     
     def generate_reward_function(self, sample_params=None):
-        """Generate reward function with current parameters"""
+        """Generate reward function with length-adaptive scaling"""
         if sample_params is None:
             params = self.current_params
         else:
             params = sample_params
     
         def parameterized_reward(state, action):
-            # Get environment parameters if available
+            # Get environment parameters
             env_params = getattr(parameterized_reward, 'env_params', {
                 'length': 0.5,
                 'mass_cart': 1.0
             })
             
-            # Calculate energy-based components with environment scaling
-            length_scale = env_params.get('length', 0.5) / 0.5  # Normalize to default length
+            # Dynamic scaling based on pole length
+            length_scale = env_params.get('length', 0.5) / 0.5
+            inverse_scale = 0.5 / env_params.get('length', 0.5)
             
-            kinetic_contrib = params['energy_weights']['kinetic'] * np.sum(state[1::2]**2) * length_scale
-            potential_contrib = params['energy_weights']['potential'] * np.abs(state[2]) * length_scale
-            stability_contrib = params['energy_weights']['stability'] * np.abs(state[3])
+            # Core components with adaptive scaling
+            kinetic_term = params['energy_weights']['kinetic'] * np.sum(state[1::2]**2) * inverse_scale
+            potential_term = params['energy_weights']['potential'] * np.abs(state[2]) * length_scale
+            stability_term = params['energy_weights']['stability'] * np.abs(state[3])
             
-            # Add regularization
-            l1_penalty = params['regularization']['l1_strength'] * np.sum(np.abs(state))
-            l2_penalty = params['regularization']['l2_strength'] * np.sum(state**2)
+            # Adjust learning rates based on length
+            learning_factor = 1.0 + (length_scale - 1.0) * 0.5
             
             reward = (
-                kinetic_contrib +
-                potential_contrib +
-                stability_contrib -
-                l1_penalty -
-                l2_penalty
+                kinetic_term +
+                potential_term +
+                stability_term * learning_factor
             )
             
             return float(reward)
@@ -235,56 +234,44 @@ class RewardFunctionMetaLearner:
         
         
     def meta_update(self, trajectories):
-        """Enhanced meta-update using full trajectory information"""
-        
+        """Enhanced meta-update with adaptive rates"""
         # Extract performance metrics
         performances = []
-        state_transitions = []
         env_params = []
         
         for trajectory in trajectories:
-            # Get environment context
             env_params.append(trajectory['env_params'])
-            
-            # Calculate trajectory performance metrics
-            performance = {
+            performances.append({
                 'episode_length': trajectory['episode_length'],
                 'total_reward': trajectory['total_reward']
-            }
-            performances.append(performance)
-            
-            # Extract state transitions
-            for state_data in trajectory['states']:
-                state_transitions.append({
-                    'state': state_data[0],
-                    'action': state_data[1],
-                    'reward': state_data[2],
-                    'next_state': state_data[3]
-                })
+            })
     
-        # Update reward parameters based on performance
         avg_episode_length = np.mean([p['episode_length'] for p in performances])
         avg_total_reward = np.mean([p['total_reward'] for p in performances])
         
-        # Adjust weights based on performance
+        # Dynamic adaptation rate based on performance
+        base_adaptation_rate = 0.1
+        if avg_episode_length > self.last_avg_length:
+            adaptation_rate = base_adaptation_rate * 1.5  # Faster adaptation when improving
+        else:
+            adaptation_rate = base_adaptation_rate * 0.8  # Slower adaptation when degrading
+        
+        # Update weights with dynamic rate
         for param_name in self.hyperparameter_space['energy_weights']:
             current_value = self.current_params['energy_weights'][param_name]
-            # Increase weight if performance improved
             if avg_episode_length > self.last_avg_length:
-                self.current_params['energy_weights'][param_name] *= 1.1
+                self.current_params['energy_weights'][param_name] *= (1 + adaptation_rate)
             else:
-                self.current_params['energy_weights'][param_name] *= 0.9
-                
-            # Keep within bounds
+                self.current_params['energy_weights'][param_name] *= (1 - adaptation_rate * 0.5)
+            
+            # Keep within bounds with smoother clipping
             self.current_params['energy_weights'][param_name] = np.clip(
                 self.current_params['energy_weights'][param_name],
                 self.hyperparameter_space['energy_weights'][param_name][0],
                 self.hyperparameter_space['energy_weights'][param_name][1]
             )
         
-        # Store performance for next update
         self.last_avg_length = avg_episode_length
-        
         return avg_total_reward
         
         
