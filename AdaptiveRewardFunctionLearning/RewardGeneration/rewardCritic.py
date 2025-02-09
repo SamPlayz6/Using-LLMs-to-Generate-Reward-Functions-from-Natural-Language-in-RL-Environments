@@ -142,118 +142,133 @@ class RewardUpdateSystem:
             print(f"\nGenerating new reward function for component {self.targetComponent}...")
             graph = self.generatePerformanceGraphs()
             updatePrompt = self.createUpdatePrompt(currentFunction, graph)
-
-            #queryAnthropicApi
-            from AdaptiveRewardFunctionLearning.Prompts.APIQuery import queryAnthropicApi
+    
             proposedFunction = queryAnthropicApi(self.apiKey, self.modelName, updatePrompt)
             
             print("\nProposed Function:")
             print(proposedFunction)
             
-            print("\nWaiting 10 seconds before critic evaluation...")
-            time.sleep(10)
+            # Extract the actual function code
+            newFunctionCode = extractFunctionCode(proposedFunction)
             
-            print("\nGetting critic's evaluation...")
-            criticPrompt = self.createCriticPrompt(proposedFunction)
             criticResponse = queryAnthropicApi(self.apiKey, self.modelName, criticPrompt)
-            
-            print("\nCritic Response:")
-            print(criticResponse)
-            
             approved = criticResponse.strip().endswith("Decision: Yes")
-            print(f"\nCritic Decision: {'Approved' if approved else 'Rejected'}")
             
             if approved:
                 self.lastRewardFunction = currentFunction
-                return proposedFunction, True
+                self.logFunctionUpdate(f'Component {self.targetComponent}', currentFunction, newFunctionCode)
+                # Store the new function code
+                if not hasattr(dynamicRewardFunction, 'function_updates'):
+                    dynamicRewardFunction.function_updates = {}
+                dynamicRewardFunction.function_updates[f'rewardFunction{self.targetComponent}'] = newFunctionCode
+                
+                # Make sure to record when the change happened
+                if not hasattr(dynamicRewardFunction, 'rewardChanges'):
+                    dynamicRewardFunction.rewardChanges = []
+                dynamicRewardFunction.rewardChanges.append(self.episodeCount)
+                
+                return newFunctionCode, True
+                
             return currentFunction, False
-            
+                
         except Exception as e:
             print(f"\nError during update: {e}")
             return currentFunction, False
 
 
+    def logFunctionUpdate(self, component, old_func, new_func):
+        """Log when a reward function is updated"""
+        print(f"\nUpdating {component} reward function:")
+        print("Old function:")
+        print(old_func)
+        print("\nNew function:")
+        print(new_func)
+        print("-" * 50)
+
+
 # ----- Watining Time Function
 
 
-    # def waitingTime(self, componentName, metrics, lastUpdateEpisode, threshold=100):
+    def waitingTime(self, componentName, metrics, lastUpdateEpisode, threshold=100):
+    currentEpisode = metrics['currentEpisode']
+    timeSinceUpdate = currentEpisode - lastUpdateEpisode
+    
+    # Get recent performance trends
+    recentRewards = metrics['recentRewards']
+    
+    # Calculate stability metrics
+    avgStandTime = metrics['averageBalanceTime']
+    standTimeVariance = metrics['balanceTimeVariance']
+    
+    # Component-specific thresholds with increased sensitivity
+    if componentName == 'stability':
+        variance_threshold = threshold * 0.6  # More sensitive to variance
+    elif componentName == 'efficiency':
+        variance_threshold = threshold * 1.4  # Less sensitive to variance
+    else:
+        variance_threshold = threshold
+    
+    # Update conditions
+    if timeSinceUpdate < 500:  # Increased minimum time between updates
+        return False
+        
+    if len(recentRewards) > 75:
+        rewardDerivative = np.gradient(recentRewards)
+
+        # Calculate different trend windows
+        short_trend = np.mean(rewardDerivative[-20:])
+        medium_trend = np.mean(rewardDerivative[-40:])
+        
+        # Calculate performance stability
+        current_performance = np.mean(recentRewards[-20:])
+        performance_variance = np.var(recentRewards[-20:])
+        long_term_performance = np.mean(recentRewards[-100:])
+        
+        # Different conditions for updates:
+        should_update = False
+        
+        # 1. Major performance drop with high variance
+        if timeSinceUpdate >= 1000 and \
+        performance_variance > current_performance * 0.5 and \
+        short_trend > current_performance * 1.2:
+            print(f"\nHigh variance with performance drop detected for {componentName}")
+            print(f"Variance: {performance_variance:.2f}, Current Performance: {current_performance:.2f}")
+            should_update = True
+        
+        # 2. Sustained poor performance
+        elif timeSinceUpdate >= 2000 and \
+            short_trend > current_performance * 1.15 and \
+            medium_trend > current_performance * 1.1:
+            print(f"\nSustained performance decline detected for {componentName}")
+            print(f"Short trend: {short_trend:.2f}, Medium trend: {medium_trend:.2f}")
+            should_update = True
+            
+        # 3. Significant performance degradation
+        elif current_performance < 0.5 * long_term_performance:
+            print(f"\nSignificant performance degradation detected for {componentName}")
+            print(f"Current: {current_performance:.2f} vs Long-term: {long_term_performance:.2f}")
+            should_update = True
+        
+        return should_update
+        
+    return False
+
+
+    # def waitingTime(self, componentName, metrics, lastUpdateEpisode, threshold=5000):
+    #     """
+    #     Determine if it's time to update the reward function
+    #     """
     #     currentEpisode = metrics['currentEpisode']
     #     timeSinceUpdate = currentEpisode - lastUpdateEpisode
         
-    #     # Get recent performance trends
-    #     recentRewards = metrics['recentRewards']
+    #     # Only return True at exact intervals
+    #     should_update = (currentEpisode % threshold == 0 and currentEpisode != 0)
         
-    #     # Calculate stability metrics
-    #     avgStandTime = metrics['averageBalanceTime']
-    #     standTimeVariance = metrics['balanceTimeVariance']
+    #     # Only print debug info when we're actually updating or at major intervals
+    #     if should_update or currentEpisode % 2000 == 0:
+    #         print(f"\nChecking for update at episode {currentEpisode}, time since last update: {timeSinceUpdate}")
         
-    #     # Component-specific thresholds
-    #     if componentName == 'stability':
-    #         variance_threshold = threshold * 0.8  # More sensitive to variance
-    #     elif componentName == 'efficiency':
-    #         variance_threshold = threshold * 1.2  # Less sensitive to variance
-    #     else:
-    #         variance_threshold = threshold
+    #     if should_update:
+    #         print(f"✓ Update triggered at episode {currentEpisode}")
         
-    #     # Update conditions
-    #     if timeSinceUpdate < 200:
-    #         # print("Too soon since last update")
-    #         return False
-            
-    #     if len(recentRewards) > 75:
-    #         rewardDerivative = np.gradient(recentRewards)
-    
-    #         # Calculate different trend windows
-    #         short_trend = np.mean(rewardDerivative[-20:])
-    #         medium_trend = np.mean(rewardDerivative[-40:])
-            
-    #         # Calculate performance stability
-    #         current_performance = np.mean(recentRewards[-20:])
-    #         performance_variance = np.var(recentRewards[-20:])
-            
-    #         # print(f"\nChecking {componentName} component:")
-    #         # print(f"Time since update: {timeSinceUpdate}")
-    #         # print(f"Short-term trend: {short_trend:.3f}")
-    #         # print(f"Medium-term trend: {medium_trend:.3f}")
-    #         # print(f"Performance variance: {performance_variance:.3f}")
-            
-    #         # Different conditions for updates:
-    #         should_update = False
-            
-    #         # 1. Major performance drop with high variance
-    #         if timeSinceUpdate >= 75 and \
-    #         performance_variance > current_performance * 0.5 and \
-    #         short_trend > current_performance * 1.2:
-    #             print("High variance with performance drop detected")
-    #             should_update = True
-            
-    #         # 2. Sustained poor performance
-    #         elif timeSinceUpdate >= 150 and \
-    #             short_trend > current_performance * 1.15 and \
-    #             medium_trend >current_performance * 1.1:
-    #             print("Sustained performance decline detected")
-    #             should_update = True
-            
-    #         return should_update
-            
-    #     return False
-
-
-    def waitingTime(self, componentName, metrics, lastUpdateEpisode, threshold=5000):
-        """
-        Determine if it's time to update the reward function
-        """
-        currentEpisode = metrics['currentEpisode']
-        timeSinceUpdate = currentEpisode - lastUpdateEpisode
-        
-        # Only return True at exact intervals
-        should_update = (currentEpisode % threshold == 0 and currentEpisode != 0)
-        
-        # Only print debug info when we're actually updating or at major intervals
-        if should_update or currentEpisode % 2000 == 0:
-            print(f"\nChecking for update at episode {currentEpisode}, time since last update: {timeSinceUpdate}")
-        
-        if should_update:
-            print(f"✓ Update triggered at episode {currentEpisode}")
-        
-        return should_update
+    #     return should_update

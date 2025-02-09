@@ -68,37 +68,47 @@ def timeBasedReward(observation, action):
 from AdaptiveRewardFunctionLearning.RewardGeneration.rewardCritic import RewardUpdateSystem
 
 def dynamicRewardFunction(observation, action, metrics=None):
-    # Initialize weights and tracking if not exist
+    # Initialize weights and function tracking if not exist
     if not hasattr(dynamicRewardFunction, 'weights'):
         dynamicRewardFunction.weights = {
             'stability': {'value': 0.33, 'lastUpdate': 0},
             'efficiency': {'value': 0.33, 'lastUpdate': 0},
             'time': {'value': 0.34, 'lastUpdate': 0}
         }
+        dynamicRewardFunction.function_updates = {}
         dynamicRewardFunction.lastObservation = observation
         dynamicRewardFunction.episodeEnded = False
     
-    # Update last observation
-    dynamicRewardFunction.lastObservation = observation
-    
-    # Get the function strings from createDynamicFunctions
+    # Get base functions or their updated versions
     functionStrings = createDynamicFunctions()
     
-    # Create namespace and execute the string functions
+    # Override with any updated functions
+    if hasattr(dynamicRewardFunction, 'function_updates'):
+        for func_name, new_code in dynamicRewardFunction.function_updates.items():
+            if func_name.startswith('rewardFunction1'):
+                functionStrings['stability'] = new_code
+            elif func_name.startswith('rewardFunction2'):
+                functionStrings['efficiency'] = new_code
+            elif func_name.startswith('rewardFunction3'):
+                functionStrings['time'] = new_code
+    
+    # Create namespace and execute the functions
     namespace = {}
     exec(functionStrings['stability'], namespace)
     exec(functionStrings['efficiency'], namespace)
     exec(functionStrings['time'], namespace)
     
-    # Get individual rewards using the executed functions
+    # Get rewards using potentially updated functions
     stability = namespace['stabilityReward'](observation, action)
     efficiency = namespace['energyEfficiencyReward'](observation, action)
     timeReward = namespace['timeBasedReward'](observation, action)
     
     # Combine rewards with current weights
-    return (stability * dynamicRewardFunction.weights['stability']['value'] + 
-            efficiency * dynamicRewardFunction.weights['efficiency']['value'] + 
-            timeReward * dynamicRewardFunction.weights['time']['value'])
+    reward = (stability * dynamicRewardFunction.weights['stability']['value'] + 
+             efficiency * dynamicRewardFunction.weights['efficiency']['value'] + 
+             timeReward * dynamicRewardFunction.weights['time']['value'])
+    
+    return reward
 
 
 
