@@ -1,372 +1,421 @@
+import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import gymnasium as gym
-from typing import Dict, List, Callable
-import optuna
+from torch.distributions import Normal
+import torch.nn.functional as F
+from collections import deque
+import random
 
-class RewardFunctionMetaLearner:
+class RewardNetwork(nn.Module):
     def __init__(self, state_dim, action_dim):
+        super().__init__()
+        input_dim = state_dim + action_dim
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
+        
+        # Better initialization
+        for layer in self.network:
+            if isinstance(layer, nn.Linear):
+                nn.init.orthogonal_(layer.weight)
+                nn.init.constant_(layer.bias, 0)
+    
+    def forward(self, state_action):
+        return self.network(state_action)
+
+class RewardFunctionMetaLearner:  # Changed class name back to match existing imports
+    def __init__(self, state_dim, action_dim, meta_learning_rate=0.001, inner_lr=0.001):
         """
-        Meta-learning framework for reward function optimization
+        Enhanced meta-learning framework for reward function optimization
         
         Args:
-            state_dim (int): Dimension of state space
-            action_dim (int): Dimension of action space
+            state_dim (int): Dimension of the state space
+            action_dim (int): Dimension of the action space
+            meta_learning_rate (float): Learning rate for meta-optimization
+            inner_lr (float): Learning rate for inner loop policy optimization
         """
         self.state_dim = state_dim
         self.action_dim = action_dim
+        self.clip_value = 1.0
         
-        # Parameterized reward function generator
-        self.reward_function_network = self.create_reward_network()
+        # Initialize networks
+        self.reward_network = RewardNetwork(state_dim, action_dim)
+        self.policy_network = PolicyNetwork(state_dim, action_dim)
         
-        # Hyperparameter space
-        self.hyperparameter_space = {
-            'learning_rate': (1e-4, 1e-2),
-            'energy_weights': {
-                'kinetic': (-2.0, 2.0),
-                'potential': (-2.0, 2.0),
-                'stability': (-2.0, 2.0),
-                'control': (-1.0, 1.0)
-            },
-            'regularization': {
-                'l1_strength': (0, 1e-3),
-                'l2_strength': (0, 1e-3)
-            }
-        }
+        # Initialize optimizers with better parameters
+        self.reward_optimizer = optim.Adam(self.reward_network.parameters(), 
+                                         lr=meta_learning_rate,
+                                         weight_decay=0.01)  # L2 regularization
+        self.policy_optimizer = optim.Adam(self.policy_network.parameters(), 
+                                         lr=inner_lr)
         
-        # Initialize current parameters from hyperparameter space
-        self.current_params = {
-            'learning_rate': np.random.uniform(
-                self.hyperparameter_space['learning_rate'][0],
-                self.hyperparameter_space['learning_rate'][1]
-            ),
-            'energy_weights': {
-                k: np.random.uniform(v[0], v[1]) 
-                for k, v in self.hyperparameter_space['energy_weights'].items()
-            },
-            'regularization': {
-                k: np.random.uniform(v[0], v[1])
-                for k, v in self.hyperparameter_space['regularization'].items()
-            }
-        }
-        
-        self.last_avg_length = 0
-    
-    def create_reward_network(self):
-        """
-        Create a flexible neural network for reward function generation
-        
-        Returns:
-            nn.Module: Reward function generator
-        """
-        return nn.Sequential(
-            nn.Linear(self.state_dim, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1)  # Single output for reward
+        # Add learning rate scheduler
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.reward_optimizer,
+            mode='min',
+            factor=0.5,
+            patience=5,
+            verbose=True
         )
+        
+        # Experience replay buffer
+        self.replay_buffer = deque(maxlen=10000)
+        
+        # Track best performance for early stopping
+        self.best_performance = float('-inf')
+        self.best_state_dict = None
+
+    def generate_reward_function(self):
+        """Method required for compatibility with 3_performance.ipynb"""
+        return self.parameterized_reward
     
-    def generate_reward_function(self, sample_params=None):
-        """Generate reward function with length-adaptive scaling"""
-        if sample_params is None:
-            params = self.current_params
-        else:
-            params = sample_params
+    def process_state(self, state):
+        """Normalize state components"""
+        if isinstance(state, np.ndarray):
+            state = torch.from_numpy(state).float()
+        elif not isinstance(state, torch.Tensor):
+            state = torch.tensor(state, dtype=torch.float32)
+        
+        # Normalize state components
+        normalized_state = torch.tensor([
+            state[0] / 2.4,     # Cart position normalized by track width
+            state[1] / 10.0,    # Velocity normalized by typical range
+            state[2] / 0.209,   # Angle normalized by allowed range
+            state[3] / 10.0     # Angular velocity normalized
+        ])
+        
+        return normalized_state
     
-        def parameterized_reward(state, action):
-            # Get environment parameters
-            env_params = getattr(parameterized_reward, 'env_params', {
-                'length': 0.5,
-                'mass_cart': 1.0
-            })
-            
-            # Dynamic scaling based on pole length
-            length_scale = env_params.get('length', 0.5) / 0.5
-            inverse_scale = 0.5 / env_params.get('length', 0.5)
-            
-            # Core components with adaptive scaling
-            kinetic_term = params['energy_weights']['kinetic'] * np.sum(state[1::2]**2) * inverse_scale
-            potential_term = params['energy_weights']['potential'] * np.abs(state[2]) * length_scale
-            stability_term = params['energy_weights']['stability'] * np.abs(state[3])
-            
-            # Adjust learning rates based on length
-            learning_factor = 1.0 + (length_scale - 1.0) * 0.5
-            
-            reward = (
-                kinetic_term +
-                potential_term +
-                stability_term * learning_factor
-            )
-            
-            return float(reward)
-    
-        return parameterized_reward
-    
-    def sample_hyperparameters(self):
+    def parameterized_reward(self, state, action):
         """
-        Sample hyperparameters from predefined space
-        
-        Returns:
-            dict: Sampled hyperparameters
+        Enhanced reward function using neural network
         """
-        return {
-            'learning_rate': np.random.uniform(
-                self.hyperparameter_space['learning_rate'][0],
-                self.hyperparameter_space['learning_rate'][1]
-            ),
-            'energy_weights': {
-                k: np.random.uniform(v[0], v[1]) 
-                for k, v in self.hyperparameter_space['energy_weights'].items()
-            },
-            'regularization': {
-                k: np.random.uniform(v[0], v[1])
-                for k, v in self.hyperparameter_space['regularization'].items()
-            }
-        }
-    
-    def meta_optimize(self, num_iterations=100, episodes_per_iteration=10):
-        """
-        Meta-optimization of reward function
-        
-        Args:
-            num_iterations (int): Number of meta-learning iterations
-            episodes_per_iteration (int): Episodes to evaluate each reward function
-        
-        Returns:
-            List of performance metrics
-        """
-        # Performance tracking
-        performance_history = []
-        
-        for iteration in range(num_iterations):
-            # Generate reward function variants
-            reward_functions = [
-                self.generate_reward_function() 
-                for _ in range(10)
-            ]
+        try:
+            # Process state
+            state = self.process_state(state)
             
-            # Evaluate each reward function variant
-            iteration_performances = []
-            
-            for reward_func in reward_functions:
-                # Simulate performance
-                performance = self.evaluate_reward_function(
-                    reward_func, 
-                    episodes=episodes_per_iteration
-                )
-                iteration_performances.append(performance)
-            
-            # Select and update based on performance
-            best_performance = max(iteration_performances)
-            performance_history.append(best_performance)
-            
-            # Adaptive learning rate adjustment
-            self.update_reward_network(best_performance)
-        
-        return performance_history
-    
-    def evaluate_reward_function(self, reward_func, episodes=10):
-        """
-        Evaluate a specific reward function
-        
-        Args:
-            reward_func (Callable): Reward computation function
-            episodes (int): Number of episodes to simulate
-        
-        Returns:
-            float: Performance metric
-        """
-        env = gym.make('CartPole-v1')
-        total_rewards = []
-        
-        for _ in range(episodes):
-            state, _ = env.reset()
-            done = False
-            episode_reward = 0
-            
-            while not done:
-                action = env.action_space.sample()
-                next_state, _, done, _, _ = env.step(action)
+            # Process action - handle all possible input types
+            if isinstance(action, (int, np.int64)):
+                action = torch.tensor([float(action)], dtype=torch.float32)
+            elif isinstance(action, float):
+                action = torch.tensor([action], dtype=torch.float32)
+            elif isinstance(action, np.ndarray):
+                action = torch.from_numpy(action.astype(np.float32))
+            elif isinstance(action, torch.Tensor):
+                action = action.float()
+            else:
+                raise ValueError(f"Unexpected action type: {type(action)}")
                 
-                # Compute reward using generated function
-                reward = reward_func(next_state, action)
-                episode_reward += reward
+            # Ensure action is 1D tensor
+            if action.dim() == 0:
+                action = action.unsqueeze(0)
             
-            total_rewards.append(episode_reward)
-        
-        return np.mean(total_rewards)
+            # Combine state and action
+            state_action = torch.cat([state, action])
+            
+            # Compute reward
+            with torch.no_grad():
+                reward = self.reward_network(state_action)
+            
+            return float(reward.item())
+            
+        except Exception as e:
+            print(f"Error in parameterized_reward: {str(e)}")
+            print(f"State type: {type(state)}, Action type: {type(action)}")
+            print(f"State shape: {state.shape if hasattr(state, 'shape') else 'no shape'}")
+            print(f"Action shape: {action.shape if hasattr(action, 'shape') else 'no shape'}")
+            raise e
     
-    def update_reward_network(self, performance):
+    def compute_meta_loss(self, trajectories):
         """
-        Update reward function generator based on performance
-
-        Args:
-            performance (float): Performance metric
+        Enhanced meta-loss computation with multiple components
         """
-        # Use absolute value of performance to ensure positive learning rate
-        abs_performance = abs(performance)
-
-        # Simple performance-based update with guaranteed positive learning rate
-        optimizer = optim.Adam(
-            self.reward_function_network.parameters(),
-            lr=0.001 * abs_performance
-        )
-
-        # Simulate a gradient update
-        optimizer.zero_grad()
-        loss = torch.tensor(-performance, requires_grad=True)
-        loss.backward()
-        optimizer.step()
-
+        total_loss = 0
+        batch_size = len(trajectories)
+        
+        for trajectory in trajectories:
+            # Extract data
+            states = torch.stack([self.process_state(s) for s in trajectory['states']])
+            next_states = torch.stack([self.process_state(s) for s in trajectory['next_states']])
+            actions = torch.tensor(trajectory['actions'])
+            
+            # Compute current and next values
+            current_state_action = torch.cat([states, actions], dim=1)
+            next_state_action = torch.cat([next_states, actions], dim=1)
+            
+            current_values = self.reward_network(current_state_action)
+            next_values = self.reward_network(next_state_action)
+            
+            # TD error
+            td_error = (next_values - current_values).pow(2).mean()
+            
+            # Stability term (penalize extreme angles and positions)
+            stability_loss = (torch.abs(states[:, 2]).mean() +  # angle
+                            torch.abs(states[:, 0]).mean())     # position
+            
+            # Combine losses
+            trajectory_loss = td_error + 0.1 * stability_loss
+            
+            total_loss += trajectory_loss
+        
+        return total_loss / batch_size
+    
+    def process_trajectory(self, trajectory):
+        """Process trajectory for replay buffer"""
+        processed_data = []
+        
+        try:
+            states = trajectory['states']
+            next_states = trajectory['next_states']
+            actions = trajectory['actions']
+            rewards = trajectory.get('rewards', [0] * len(states))  # Default to 0 if not provided
+            
+            for i in range(len(states)):
+                if isinstance(states[i], tuple):  # Handle if states are still in memory tuples
+                    processed_data.append({
+                        'state': states[i][0],  # Assuming state is first element
+                        'next_state': states[i][3],  # Assuming next_state is fourth element
+                        'action': states[i][1],  # Assuming action is second element
+                        'reward': rewards[i]
+                    })
+                else:
+                    processed_data.append({
+                        'state': states[i],
+                        'next_state': next_states[i],
+                        'action': actions[i],
+                        'reward': rewards[i]
+                    })
+                    
+        except Exception as e:
+            print(f"Error processing trajectory: {str(e)}")
+            print(f"Trajectory keys: {trajectory.keys()}")
+            print(f"States type: {type(states)}")
+            if len(states) > 0:
+                print(f"First state type: {type(states[0])}")
+            raise e
+        
+        return processed_data
+    
+    def meta_update(self, trajectories):
+        """
+        Enhanced meta-learning update with experience replay and multiple updates
+        """
+        # Add new trajectories to replay buffer
+        for trajectory in trajectories:
+            self.replay_buffer.extend(self.process_trajectory(trajectory))
+        
+        total_loss = 0
+        num_updates = 5
+        
+        for _ in range(num_updates):
+            # Sample batch
+            batch_size = min(128, len(self.replay_buffer))
+            batch = random.sample(list(self.replay_buffer), batch_size)
+            
+            # Create trajectory-like structure for batch
+            batch_trajectory = {
+                'states': [b['state'] for b in batch],
+                'next_states': [b['next_state'] for b in batch],
+                'actions': [b['action'] for b in batch]
+            }
+            
+            # Compute loss
+            meta_loss = self.compute_meta_loss([batch_trajectory])
+            
+            # Add L2 regularization
+            l2_reg = sum(p.pow(2).sum() for p in self.reward_network.parameters())
+            loss = meta_loss + 0.01 * l2_reg
+            
+            # Update with gradient clipping
+            self.reward_optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.reward_network.parameters(), self.clip_value)
+            self.reward_optimizer.step()
+            
+            total_loss += loss.item()
+        
+        avg_loss = total_loss / num_updates
+        
+        # Update learning rate
+        self.scheduler.step(avg_loss)
+        
+        # Update best model if performance improved
+        if -avg_loss > self.best_performance:
+            self.best_performance = -avg_loss
+            self.best_state_dict = self.reward_network.state_dict()
+        
+        return avg_loss
         
     def recordEpisode(self, info, steps, totalReward):
+        """Record episode information for tracking performance"""
         if not hasattr(self, 'episode_history'):
             self.episode_history = []
-
+        
+        # Store episode information
         self.episode_history.append({
             'info': info,
             'steps': steps,
-            'reward': totalReward
+            'reward': totalReward,
+            'episode': len(self.episode_history)
         })
         
-        
-    def meta_update(self, trajectories):
-        """Enhanced meta-update with adaptive rates"""
-        # Extract performance metrics
-        performances = []
-        env_params = []
-        
-        for trajectory in trajectories:
-            env_params.append(trajectory['env_params'])
-            performances.append({
-                'episode_length': trajectory['episode_length'],
-                'total_reward': trajectory['total_reward']
-            })
-    
-        avg_episode_length = np.mean([p['episode_length'] for p in performances])
-        avg_total_reward = np.mean([p['total_reward'] for p in performances])
-        
-        # Dynamic adaptation rate based on performance
-        base_adaptation_rate = 0.1
-        if avg_episode_length > self.last_avg_length:
-            adaptation_rate = base_adaptation_rate * 1.5  # Faster adaptation when improving
-        else:
-            adaptation_rate = base_adaptation_rate * 0.8  # Slower adaptation when degrading
-        
-        # Update weights with dynamic rate
-        for param_name in self.hyperparameter_space['energy_weights']:
-            current_value = self.current_params['energy_weights'][param_name]
-            if avg_episode_length > self.last_avg_length:
-                self.current_params['energy_weights'][param_name] *= (1 + adaptation_rate)
-            else:
-                self.current_params['energy_weights'][param_name] *= (1 - adaptation_rate * 0.5)
-            
-            # Keep within bounds with smoother clipping
-            self.current_params['energy_weights'][param_name] = np.clip(
-                self.current_params['energy_weights'][param_name],
-                self.hyperparameter_space['energy_weights'][param_name][0],
-                self.hyperparameter_space['energy_weights'][param_name][1]
-            )
-        
-        self.last_avg_length = avg_episode_length
-        return avg_total_reward
-        
-        
-# Bayesian Hyperparameter Optimization
-class HyperparameterTuner:
-    def __init__(self, meta_learner):
-        """
-        Advanced hyperparameter optimization
-        
-        Args:
-            meta_learner (RewardFunctionMetaLearner): Meta-learning framework
-        """
-        self.meta_learner = meta_learner
-    
-    def objective(self, trial):
-        """
-        Optuna objective function for hyperparameter optimization
-        
-        Args:
-            trial (optuna.Trial): Optimization trial
-        
-        Returns:
-            float: Performance metric
-        """
-        # Sample hyperparameters
-        learning_rate = trial.suggest_loguniform(
-            'learning_rate', 
-            1e-4, 1e-2
-        )
-        
-        kinetic_weight = trial.suggest_uniform(
-            'kinetic_weight', 
-            -1, 1
-        )
-        
-        potential_weight = trial.suggest_uniform(
-            'potential_weight', 
-            -1, 1
-        )
-        
-        # Create custom reward function with sampled parameters
-        custom_params = {
-            'energy_weights': {
-                'kinetic': kinetic_weight,
-                'potential': potential_weight,
-                'stability': trial.suggest_uniform('stability_weight', -1, 1)
-            },
-            'regularization': {
-                'l1_strength': trial.suggest_loguniform('l1_strength', 1e-5, 1e-2),
-                'l2_strength': trial.suggest_loguniform('l2_strength', 1e-5, 1e-2)
-            },
-            'learning_rate': learning_rate
-        }
-        
-        # Generate and evaluate reward function
-        reward_func = self.meta_learner.generate_reward_function(custom_params)
-        performance = self.meta_learner.evaluate_reward_function(reward_func)
-        
-        return performance
-    
-    def optimize(self, n_trials=100):
-        """
-        Run Bayesian optimization
-        
-        Args:
-            n_trials (int): Number of optimization trials
-        
-        Returns:
-            Dict: Best hyperparameters and performance
-        """
-        study = optuna.create_study(direction='maximize')
-        study.optimize(self.objective, n_trials=n_trials)
-        
-        return {
-            'best_params': study.best_params,
-            'best_value': study.best_value
-        }
+        # Debug print every 1000 episodes
+        if len(self.episode_history) % 1000 == 0:
+            print(f"\nMeta-Learning Metrics at episode {len(self.episode_history)}:")
+            print(f"Recent average reward: {np.mean([e['reward'] for e in self.episode_history[-100:]]):.2f}")
+            print(f"Recent average steps: {np.mean([e['steps'] for e in self.episode_history[-100:]]):.2f}")
 
-def main():
-    # Initialize meta-learning framework
+class PolicyNetwork(nn.Module):
+    def __init__(self, state_dim, action_dim):
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Linear(state_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, action_dim)
+        )
+        
+        self.log_std = nn.Parameter(torch.zeros(action_dim))
+        
+        # Better initialization
+        for layer in self.network:
+            if isinstance(layer, nn.Linear):
+                nn.init.orthogonal_(layer.weight)
+                nn.init.constant_(layer.bias, 0)
+    
+    def forward(self, state):
+        """Compute action distribution"""
+        if not isinstance(state, torch.Tensor):
+            state = torch.FloatTensor(state)
+        mean = self.network(state)
+        std = torch.exp(self.log_std)
+        return Normal(mean, std)
+    
+    def select_action(self, state):
+        """Sample an action from the policy"""
+        if not isinstance(state, torch.Tensor):
+            state = torch.FloatTensor(state)
+        if state.dim() == 1:
+            state = state.unsqueeze(0)
+        dist = self(state)
+        action = dist.sample()
+        return action.numpy()[0]
+
+def run_episode(env, policy_network, meta_reward_learner, render=False):
+    """Run a single episode with meta-learned reward function"""
+    state, _ = env.reset()
+    done = False
+    truncated = False
+    
+    trajectory = {
+        'states': [],
+        'actions': [],
+        'rewards': [],
+        'next_states': []
+    }
+    
+    total_reward = 0
+    
+    while not (done or truncated):
+        # Select action
+        action = policy_network.select_action(state)
+        
+        # Step environment
+        next_state, reward, done, truncated, _ = env.step(action)
+        
+        # Compute meta-learned reward
+        meta_reward = meta_reward_learner.parameterized_reward(next_state, action)
+        
+        # Store trajectory
+        trajectory['states'].append(state)
+        trajectory['actions'].append(action)
+        trajectory['rewards'].append(meta_reward)
+        trajectory['next_states'].append(next_state)
+        
+        # Update state and total reward
+        state = next_state
+        total_reward += meta_reward
+        
+        if render:
+            env.render()
+    
+    return trajectory
+
+def meta_learning_cartpole():
+    """Main meta-learning training loop with early stopping"""
+    # Initialize environment
     env = gym.make('CartPole-v1')
-    meta_learner = RewardFunctionMetaLearner(
-        state_dim=env.observation_space.shape[0],
-        action_dim=env.action_space.n
-    )
     
-    # Perform meta-optimization
-    performance_history = meta_learner.meta_optimize()
+    # Get state and action dimensions
+    state_dim = env.observation_space.shape[0]
+    action_dim = env.action_space.n
     
-    # Hyperparameter tuning
-    tuner = HyperparameterTuner(meta_learner)
-    best_configuration = tuner.optimize()
+    # Initialize meta-reward learner
+    meta_learner = RewardFunctionMetaLearner(state_dim, action_dim)
     
-    print("Meta-Learning Performance History:", performance_history)
-    print("Best Hyperparameter Configuration:", best_configuration)
+    # Training parameters
+    num_meta_iterations = 1000
+    episodes_per_iteration = 10
+    patience = 10
+    no_improve_count = 0
+    best_performance = float('-inf')
+    
+    for meta_iter in range(num_meta_iterations):
+        # Collect trajectories
+        trajectories = []
+        total_episode_reward = 0
+        
+        for _ in range(episodes_per_iteration):
+            trajectory = run_episode(env, meta_learner.policy_network, meta_learner)
+            trajectories.append(trajectory)
+            total_episode_reward += sum(trajectory['rewards'])
+        
+        # Compute average episode reward
+        avg_episode_reward = total_episode_reward / episodes_per_iteration
+        
+        # Perform meta-update
+        meta_loss = meta_learner.meta_update(trajectories)
+        
+        # Early stopping check
+        if avg_episode_reward > best_performance:
+            best_performance = avg_episode_reward
+            no_improve_count = 0
+            # Save best model
+            meta_learner.best_state_dict = meta_learner.reward_network.state_dict()
+        else:
+            no_improve_count += 1
+        
+        # Early stopping
+        if no_improve_count >= patience:
+            print(f"Early stopping triggered at iteration {meta_iter}")
+            # Restore best model
+            meta_learner.reward_network.load_state_dict(meta_learner.best_state_dict)
+            break
+        
+        # Periodic evaluation
+        if meta_iter % 50 == 0:
+            print(f"Meta-Iteration {meta_iter}, Meta-Loss: {meta_loss}, Avg Reward: {avg_episode_reward}")
+    
+    return meta_learner
 
+# For compatibility with 3_performance.ipynb
+def parameterized_reward(observation, action):
+    """Wrapper function for compatibility"""
+    if not hasattr(parameterized_reward, 'learner'):
+        env = gym.make('CartPole-v1')
+        state_dim = env.observation_space.shape[0]
+        action_dim = env.action_space.n
+        parameterized_reward.learner = RewardFunctionMetaLearner(state_dim, action_dim)
+    
+    return parameterized_reward.learner.parameterized_reward(observation, action)
+
+# Main execution
 if __name__ == "__main__":
-    main()
+    meta_learner = meta_learning_cartpole()

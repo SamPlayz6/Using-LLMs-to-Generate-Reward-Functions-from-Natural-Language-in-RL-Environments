@@ -190,68 +190,80 @@ class RewardUpdateSystem:
 
 
     def waitingTime(self, componentName, metrics, lastUpdateEpisode, threshold=100):
-    currentEpisode = metrics['currentEpisode']
-    timeSinceUpdate = currentEpisode - lastUpdateEpisode
-    
-    # Get recent performance trends
-    recentRewards = metrics['recentRewards']
-    
-    # Calculate stability metrics
-    avgStandTime = metrics['averageBalanceTime']
-    standTimeVariance = metrics['balanceTimeVariance']
-    
-    # Component-specific thresholds with increased sensitivity
-    if componentName == 'stability':
-        variance_threshold = threshold * 0.6  # More sensitive to variance
-    elif componentName == 'efficiency':
-        variance_threshold = threshold * 1.4  # Less sensitive to variance
-    else:
-        variance_threshold = threshold
-    
-    # Update conditions
-    if timeSinceUpdate < 500:  # Increased minimum time between updates
-        return False
+        currentEpisode = metrics['currentEpisode']
+        timeSinceUpdate = currentEpisode - lastUpdateEpisode
         
-    if len(recentRewards) > 75:
-        rewardDerivative = np.gradient(recentRewards)
-
-        # Calculate different trend windows
-        short_trend = np.mean(rewardDerivative[-20:])
-        medium_trend = np.mean(rewardDerivative[-40:])
+        # Exit early if we're within the minimum update interval
+        if timeSinceUpdate < 2000:
+            return False
+            
+        # Get recent performance trends
+        recentRewards = metrics['recentRewards']
         
-        # Calculate performance stability
+        # Only proceed if we have enough history
+        if len(recentRewards) <= 75:
+            return False
+            
+        # Calculate stability window metrics
         current_performance = np.mean(recentRewards[-20:])
-        performance_variance = np.var(recentRewards[-20:])
         long_term_performance = np.mean(recentRewards[-100:])
         
-        # Different conditions for updates:
+        # Require a minimum number of episodes after startup
+        if currentEpisode < 5000:
+            return False
+            
+        # Compute stability metrics over different windows
+        short_window = np.mean(recentRewards[-10:])
+        medium_window = np.mean(recentRewards[-30:])
+        long_window = long_term_performance
+        
+        # Check if performance is relatively stable before allowing updates
+        performance_variations = [abs(short_window - medium_window)/max(1, medium_window),
+                                abs(medium_window - long_window)/max(1, long_window)]
+        
+        # If variations are high, system is still adjusting - don't update
+        if any(var > 0.3 for var in performance_variations):  # 30% variation threshold
+            return False
+            
+        # Now check for conditions that warrant an update
         should_update = False
         
-        # 1. Major performance drop with high variance
-        if timeSinceUpdate >= 1000 and \
-        performance_variance > current_performance * 0.5 and \
-        short_trend > current_performance * 1.2:
-            print(f"\nHigh variance with performance drop detected for {componentName}")
-            print(f"Variance: {performance_variance:.2f}, Current Performance: {current_performance:.2f}")
-            should_update = True
+        # Only consider updates if we have good historical performance
+        if long_term_performance > 100:
+            # Catastrophic failure case
+            if current_performance < 0.2 * long_term_performance and timeSinceUpdate >= 5000:
+                print(f"\nCatastrophic performance degradation detected for {componentName}")
+                print(f"Current: {current_performance:.2f} vs Long-term: {long_term_performance:.2f}")
+                should_update = True
+                
+            # Sustained underperformance case
+            elif current_performance < 0.5 * long_term_performance and timeSinceUpdate >= 10000:
+                print(f"\nSustained underperformance detected for {componentName}")
+                print(f"Current: {current_performance:.2f} vs Long-term: {long_term_performance:.2f}")
+                should_update = True
         
-        # 2. Sustained poor performance
-        elif timeSinceUpdate >= 2000 and \
-            short_trend > current_performance * 1.15 and \
-            medium_trend > current_performance * 1.1:
-            print(f"\nSustained performance decline detected for {componentName}")
-            print(f"Short trend: {short_trend:.2f}, Medium trend: {medium_trend:.2f}")
-            should_update = True
+        # If we decided to update, enforce a cooldown period
+        if should_update:
+            # Store the timestamp of this update decision
+            if not hasattr(self, 'last_update_decisions'):
+                self.last_update_decisions = []
             
-        # 3. Significant performance degradation
-        elif current_performance < 0.5 * long_term_performance:
-            print(f"\nSignificant performance degradation detected for {componentName}")
-            print(f"Current: {current_performance:.2f} vs Long-term: {long_term_performance:.2f}")
-            should_update = True
-        
+            # Get current time
+            current_time = time.time()
+            
+            # Clean old decisions (older than 5 minutes)
+            self.last_update_decisions = [t for t in self.last_update_decisions 
+                                        if (current_time - t) <= 300]
+            
+            # If we've made any update decisions recently, don't actually update
+            if self.last_update_decisions:
+                print("Update skipped - system still stabilizing from recent update")
+                return False
+                
+            # Record this update decision
+            self.last_update_decisions.append(current_time)
+            
         return should_update
-        
-    return False
 
 
     # def waitingTime(self, componentName, metrics, lastUpdateEpisode, threshold=5000):
