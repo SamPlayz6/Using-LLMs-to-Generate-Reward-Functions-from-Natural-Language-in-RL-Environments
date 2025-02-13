@@ -193,77 +193,62 @@ class RewardUpdateSystem:
         currentEpisode = metrics['currentEpisode']
         timeSinceUpdate = currentEpisode - lastUpdateEpisode
         
-        # Exit early if we're within the minimum update interval
-        if timeSinceUpdate < 2000:
+        # Debug prints for initial conditions
+        print(f"\nChecking conditions for {componentName} at episode {currentEpisode}")
+        print(f"Time since last update: {timeSinceUpdate}")
+        
+        # Minimum time between updates
+        if timeSinceUpdate < 500:  # Reduced from 1000
+            print("Too soon since last update")
             return False
             
-        # Get recent performance trends
         recentRewards = metrics['recentRewards']
-        
-        # Only proceed if we have enough history
-        if len(recentRewards) <= 75:
+        if len(recentRewards) <= 25:  # Reduced from 50
+            print("Not enough reward history")
             return False
             
-        # Calculate stability window metrics
-        current_performance = np.mean(recentRewards[-20:])
-        long_term_performance = np.mean(recentRewards[-100:])
+        # Calculate performance metrics
+        current_performance = np.mean(recentRewards[-10:])  # Shorter window
+        long_term_performance = np.mean(recentRewards[-50:])  # Shorter window
         
-        # Require a minimum number of episodes after startup
-        if currentEpisode < 5000:
+        print(f"Current performance (last 10 eps): {current_performance:.2f}")
+        print(f"Long-term performance (last 50 eps): {long_term_performance:.2f}")
+        
+        # Reduced minimum episodes requirement
+        if currentEpisode < 1000:  # Reduced from 2000
+            print("Not enough total episodes")
             return False
-            
-        # Compute stability metrics over different windows
-        short_window = np.mean(recentRewards[-10:])
-        medium_window = np.mean(recentRewards[-30:])
-        long_window = long_term_performance
         
-        # Check if performance is relatively stable before allowing updates
-        performance_variations = [abs(short_window - medium_window)/max(1, medium_window),
-                                abs(medium_window - long_window)/max(1, long_window)]
+        # Simplified stability check
+        short_window = np.mean(recentRewards[-5:])  # Shorter window
+        medium_window = np.mean(recentRewards[-15:])  # Shorter window
         
-        # If variations are high, system is still adjusting - don't update
-        if any(var > 0.3 for var in performance_variations):  # 30% variation threshold
+        # More lenient variation threshold
+        performance_variation = abs(short_window - medium_window)/max(1, medium_window)
+        print(f"Performance variation: {performance_variation:.2f}")
+        
+        if performance_variation > 0.7:  # More lenient, increased from 0.5
+            print("System too unstable for update")
             return False
-            
-        # Now check for conditions that warrant an update
-        should_update = False
         
-        # Only consider updates if we have good historical performance
-        if long_term_performance > 100:
-            # Catastrophic failure case
-            if current_performance < 0.2 * long_term_performance and timeSinceUpdate >= 5000:
-                print(f"\nCatastrophic performance degradation detected for {componentName}")
+        # More aggressive update conditions
+        if long_term_performance > 25:  # Reduced from 50
+            # More sensitive to performance drops
+            if current_performance < 0.6 * long_term_performance:  # Less severe drop needed (0.6 vs 0.4)
+                print(f"\nSignificant performance drop detected for {componentName}")
                 print(f"Current: {current_performance:.2f} vs Long-term: {long_term_performance:.2f}")
-                should_update = True
+                return True
                 
-            # Sustained underperformance case
-            elif current_performance < 0.5 * long_term_performance and timeSinceUpdate >= 10000:
-                print(f"\nSustained underperformance detected for {componentName}")
+            # More sensitive to sustained underperformance
+            elif current_performance < 0.8 * long_term_performance and timeSinceUpdate >= 2000:  # More sensitive ratio
+                print(f"\nUnderperformance detected for {componentName}")
                 print(f"Current: {current_performance:.2f} vs Long-term: {long_term_performance:.2f}")
-                should_update = True
+                return True
+        else:
+            print(f"Long-term performance ({long_term_performance:.2f}) below threshold (25)")
         
-        # If we decided to update, enforce a cooldown period
-        if should_update:
-            # Store the timestamp of this update decision
-            if not hasattr(self, 'last_update_decisions'):
-                self.last_update_decisions = []
-            
-            # Get current time
-            current_time = time.time()
-            
-            # Clean old decisions (older than 5 minutes)
-            self.last_update_decisions = [t for t in self.last_update_decisions 
-                                        if (current_time - t) <= 300]
-            
-            # If we've made any update decisions recently, don't actually update
-            if self.last_update_decisions:
-                print("Update skipped - system still stabilizing from recent update")
-                return False
-                
-            # Record this update decision
-            self.last_update_decisions.append(current_time)
-            
-        return should_update
+        print("No update needed")
+        return False
 
 
     # def waitingTime(self, componentName, metrics, lastUpdateEpisode, threshold=5000):

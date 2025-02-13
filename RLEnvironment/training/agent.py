@@ -22,7 +22,7 @@ class DQLearningAgent:
         self.lossFunction = torch.nn.MSELoss()
 
         # Replay memory
-        self.memory = deque(maxlen=2000)
+        self.memory = deque(maxlen=8000)
 
     def buildModel(self):
         # Define a simple neural network model for Q-value approximation
