@@ -5,6 +5,32 @@ import base64
 from collections import deque
 import io
 import numpy as np
+import anthropic
+
+from .rewardCodeGeneration import dynamicRewardFunction
+
+
+def queryAnthropicApi(api_key, model_name, messages, max_tokens=1024):
+    client = anthropic.Anthropic(api_key=api_key)
+    generatedRewardFunction = client.messages.create(
+        model=model_name,
+        max_tokens=max_tokens,
+        messages=messages
+    )
+    return generatedRewardFunction.content[0].text
+
+def queryAnthropicExplanation(api_key, model_name, explanation_message, max_tokens=1024):
+    client = anthropic.Anthropic(api_key=api_key)
+    explanationResponse = client.messages.create(
+        model=model_name,
+        max_tokens=max_tokens,
+        messages=explanation_message
+    )
+    return explanationResponse.content[0].text
+
+
+
+    # ---------------------
 
 def extractFunctionCode(responseString):
     # First try to find code between triple backticks
@@ -38,7 +64,14 @@ class RewardUpdateSystem:
         self.episodeLengths = deque(maxlen=maxHistoryLength)
         self.episodeCount = 0
         self.lastUpdateEpisode = 0
-        self.lastRewardFunction = None
+        
+        # Memory of reward functions
+        self.bestRewardFunction = None
+        self.bestPerformance = float('-inf')
+        self.rewardFunctionHistory = []
+        self.performanceHistory = []
+        self.cooldownPeriod = 1500  # Episodes to wait after update
+        self.evaluationWindow = 50  # Episodes to evaluate performance
         
     def generatePerformanceGraphs(self):
         """Generate graphs for both rewards and episode lengths"""
@@ -69,50 +102,71 @@ class RewardUpdateSystem:
         
         return base64.b64encode(image_png).decode()
 
+
     def createUpdatePrompt(self, currentFunction: str, graph: str):
+        componentType = "stability" if self.targetComponent == 1 else "efficiency"
         recentRewards = list(self.rewardHistory)[-50:] if self.rewardHistory else []
-        recentLengths = list(self.episodeLengths)[-50:] if self.episodeLengths else []
         
         return [{
             "role": "user",
-            "content": f"""Analyze this reward component function and its performance metrics.
+            "content": f"""Analyze this {componentType} reward component function and its performance metrics.
+            
+            IMPORTANT: Make conservative, incremental improvements. Avoid dramatic changes.
             
             Current Function:
             {currentFunction}
             
             Performance Metrics:
             - Average Reward: {np.mean(recentRewards) if recentRewards else 'No data'}
-            - Average Episode Length: {np.mean(recentLengths) if recentLengths else 'No data'} steps
-            - Max Episode Length: {max(recentLengths) if recentLengths else 'No data'} steps
-            - Min Episode Length: {min(recentLengths) if recentLengths else 'No data'} steps
+            - Historical Best: {self.bestPerformance if self.bestPerformance != float('-inf') else 'No data'}
             
-            Performance Graphs:
-            {graph}
-            
-            Previous Function:
-            {self.lastRewardFunction if self.lastRewardFunction else 'No previous function'}
+            Previous Updates Performance:
+            {self._format_performance_history()}
             
             Requirements:
-            1. The function MUST be named 'rewardFunction{self.targetComponent}'
-            2. Focus on both reward optimization and episode duration
-            3. Include detailed inline comments explaining changes
-            4. Compare old vs new values in comments
+            1. Keep successful elements of the current function
+            2. Make small, targeted improvements
+            3. Maintain the core reward structure
+            4. Focus on {componentType} aspects
+            5. Include detailed inline comments explaining changes
             
             Output only the modified function with detailed inline comments."""
         }]
-
+    
+    def _format_performance_history(self):
+        if not self.performanceHistory:
+            return "No previous updates"
+        
+        history = "\n".join([
+            f"Episode {p['episode']}: Performance {p['performance']:.2f} (Best: {p['best']:.2f})"
+            for p in self.performanceHistory[-3:]  # Show last 3 updates
+        ])
+        return history
+    
     def createCriticPrompt(self, proposedFunction: str):
+        componentType = "stability" if self.targetComponent == 1 else "efficiency"
+        
         return [{
             "role": "user",
-            "content": f"""Act as a reward function critic. Analyze this proposed reward component:
-
+            "content": f"""Act as a reward function critic for a cart-pole environment. Analyze this proposed {componentType} reward component:
+    
             {proposedFunction}
-
+    
+            BASIC REQUIREMENTS:
+            1. Function name must be 'rewardFunction{self.targetComponent}'
+            2. Must accept observation and action parameters
+            3. Must return a numerical reward
+    
+            YOUR EVALUATION GUIDELINES:
+            - Be lenient and approve functions that satisfy the basic requirements
+            - Focus on whether the function will work at all, not if it's optimal
+            - Approve functions even if they have minor issues
+            - Reject only if there are critical errors that would prevent operation
+            
             Evaluate:
-            1. Is the function properly named 'rewardFunction{self.targetComponent}'?
-            2. Are reward calculations mathematically sound?
-            3. Does it focus on both reward quality and episode duration?
-            4. Are there any potential issues?
+            1. Does it have the correct function name?
+            2. Does it accept the right parameters?
+            3. Does it calculate some kind of sensible reward?
             
             End your response with EXACTLY one line containing only "Decision: Yes" or "Decision: No"."""
         }]
@@ -127,7 +181,7 @@ class RewardUpdateSystem:
             'info': info,
             'steps': steps,
             'reward': totalReward,
-            'episode': len(self.episode_history)  # Add episode counter
+            'episode': len(self.episode_history)
         })
         
         # Debug print every 1000 episodes
@@ -139,42 +193,50 @@ class RewardUpdateSystem:
         
     def validateAndUpdate(self, currentFunction: str):
         try:
-            print(f"\nGenerating new reward function for component {self.targetComponent}...")
+            componentType = "stability" if self.targetComponent == 1 else "efficiency"
+            print(f"\nGenerating new {componentType} reward function...")
+            
             graph = self.generatePerformanceGraphs()
             updatePrompt = self.createUpdatePrompt(currentFunction, graph)
-    
+            
             proposedFunction = queryAnthropicApi(self.apiKey, self.modelName, updatePrompt)
             
             print("\nProposed Function:")
             print(proposedFunction)
             
-            # Extract the actual function code
             newFunctionCode = extractFunctionCode(proposedFunction)
-            
+            criticPrompt = self.createCriticPrompt(newFunctionCode)
             criticResponse = queryAnthropicApi(self.apiKey, self.modelName, criticPrompt)
             approved = criticResponse.strip().endswith("Decision: Yes")
             
             if approved:
-                self.lastRewardFunction = currentFunction
-                self.logFunctionUpdate(f'Component {self.targetComponent}', currentFunction, newFunctionCode)
-                # Store the new function code
-                if not hasattr(dynamicRewardFunction, 'function_updates'):
-                    dynamicRewardFunction.function_updates = {}
-                dynamicRewardFunction.function_updates[f'rewardFunction{self.targetComponent}'] = newFunctionCode
+                # Store successful function if it's performing well
+                current_performance = np.mean(list(self.rewardHistory)[-self.evaluationWindow:])
+                if current_performance > self.bestPerformance:
+                    self.bestPerformance = current_performance
+                    self.bestRewardFunction = currentFunction
                 
-                # Make sure to record when the change happened
-                if not hasattr(dynamicRewardFunction, 'rewardChanges'):
-                    dynamicRewardFunction.rewardChanges = []
-                dynamicRewardFunction.rewardChanges.append(self.episodeCount)
+                self.rewardFunctionHistory.append({
+                    'episode': self.episodeCount,
+                    'function': newFunctionCode,
+                    'performance': current_performance
+                })
                 
                 return newFunctionCode, True
+            
+            # If not approved, consider reverting to best historical function
+            if self.bestRewardFunction is not None:
+                print("\nReverting to best historical reward function")
+                return self.bestRewardFunction, True
                 
             return currentFunction, False
                 
         except Exception as e:
             print(f"\nError during update: {e}")
+            if self.bestRewardFunction is not None:
+                print("\nReverting to best historical reward function due to error")
+                return self.bestRewardFunction, True
             return currentFunction, False
-
 
     def logFunctionUpdate(self, component, old_func, new_func):
         """Log when a reward function is updated"""
@@ -185,69 +247,39 @@ class RewardUpdateSystem:
         print(new_func)
         print("-" * 50)
 
-
-# ----- Watining Time Function
-
-
-    def waitingTime(self, componentName, metrics, lastUpdateEpisode, threshold=100):
+    def waitingTime(self, componentName, metrics, lastUpdateEpisode):
+        """Improved waiting time logic with performance checks"""
         currentEpisode = metrics['currentEpisode']
         timeSinceUpdate = currentEpisode - lastUpdateEpisode
         
-        # Debug prints for initial conditions
-        print(f"\nChecking conditions for {componentName} at episode {currentEpisode}")
-        print(f"Time since last update: {timeSinceUpdate}")
-        
-        # Minimum time between updates
-        if timeSinceUpdate < 500:  # Reduced from 1000
-            print("Too soon since last update")
+        # Enforce cooldown period
+        if timeSinceUpdate < self.cooldownPeriod:
             return False
             
         recentRewards = metrics['recentRewards']
-        if len(recentRewards) <= 25:  # Reduced from 50
-            print("Not enough reward history")
+        if len(recentRewards) < 100:  # Need enough history
             return False
             
         # Calculate performance metrics
-        current_performance = np.mean(recentRewards[-10:])  # Shorter window
-        long_term_performance = np.mean(recentRewards[-50:])  # Shorter window
+        current_performance = np.mean(recentRewards[-self.evaluationWindow:])
+        historical_best = np.max([np.mean(recentRewards[i:i+self.evaluationWindow]) 
+                                for i in range(0, len(recentRewards)-self.evaluationWindow, self.evaluationWindow)])
         
-        print(f"Current performance (last 10 eps): {current_performance:.2f}")
-        print(f"Long-term performance (last 50 eps): {long_term_performance:.2f}")
+        # Update tracking
+        self.performanceHistory.append({
+            'episode': currentEpisode,
+            'performance': current_performance,
+            'best': historical_best
+        })
         
-        # Reduced minimum episodes requirement
-        if currentEpisode < 1000:  # Reduced from 2000
-            print("Not enough total episodes")
-            return False
-        
-        # Simplified stability check
-        short_window = np.mean(recentRewards[-5:])  # Shorter window
-        medium_window = np.mean(recentRewards[-15:])  # Shorter window
-        
-        # More lenient variation threshold
-        performance_variation = abs(short_window - medium_window)/max(1, medium_window)
-        print(f"Performance variation: {performance_variation:.2f}")
-        
-        if performance_variation > 0.7:  # More lenient, increased from 0.5
-            print("System too unstable for update")
-            return False
-        
-        # More aggressive update conditions
-        if long_term_performance > 25:  # Reduced from 50
-            # More sensitive to performance drops
-            if current_performance < 0.6 * long_term_performance:  # Less severe drop needed (0.6 vs 0.4)
-                print(f"\nSignificant performance drop detected for {componentName}")
-                print(f"Current: {current_performance:.2f} vs Long-term: {long_term_performance:.2f}")
-                return True
-                
-            # More sensitive to sustained underperformance
-            elif current_performance < 0.8 * long_term_performance and timeSinceUpdate >= 2000:  # More sensitive ratio
-                print(f"\nUnderperformance detected for {componentName}")
-                print(f"Current: {current_performance:.2f} vs Long-term: {long_term_performance:.2f}")
-                return True
-        else:
-            print(f"Long-term performance ({long_term_performance:.2f}) below threshold (25)")
-        
-        print("No update needed")
+        # Check for significant performance degradation
+        if current_performance < 0.5 * historical_best:
+            print(f"\nPerformance Analysis for {componentName}:")
+            print(f"Current Performance: {current_performance:.2f}")
+            print(f"Historical Best: {historical_best:.2f}")
+            print(f"Relative Performance: {(current_performance/historical_best)*100:.1f}%")
+            return True
+            
         return False
 
 

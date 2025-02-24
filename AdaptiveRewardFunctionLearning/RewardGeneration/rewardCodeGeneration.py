@@ -1,79 +1,63 @@
-import anthropic
 import datetime
 import json
 
-def queryAnthropicApi(api_key, model_name, messages, max_tokens=1024):
-    # Initialize the client with the given API key
-    client = anthropic.Anthropic(api_key=api_key)
-    
-    # Generate a reward function using the provided messages
-    generatedRewardFunction = client.messages.create(
-        model=model_name,
-        max_tokens=max_tokens,
-        messages=messages
-    )
-    
-    return generatedRewardFunction.content[0].text
-
-def queryAnthropicExplanation(api_key, model_name, explanation_message, max_tokens=1024):
-    # Initialize the client with the given API key
-    client = anthropic.Anthropic(api_key=api_key)
-    
-    # Generate explanation for the reward function based on the provided explanation message
-    explanationResponse = client.messages.create(
-        model=model_name,
-        max_tokens=max_tokens,
-        messages=explanation_message
-    )
-    
-    return explanationResponse.content[0].text
 
 
-
-# Composite Function Details
+# In rewardCodeGeneration.py
 
 def createDynamicFunctions():
     stabilityFunc = """
 def stabilityReward(observation, action):
     x, xDot, angle, angleDot = observation
     # Focus purely on angle stability
-    angle_stability = 1.0 - abs(angle) / 0.209
-    angular_velocity_component = -abs(angleDot) / 10.0
-    return float(angle_stability + angular_velocity_component)
+    angle_stability = 1.0 - abs(angle) / 0.209  # Normalized angle deviation
+    
+    # Add a smaller component for angular velocity to prevent wild swinging
+    angular_velocity_component = -abs(angleDot) / 8.0
+    
+    # Small position centering component
+    position_centering = -abs(x) / 4.8  # 4.8 is 2x the failure threshold
+    
+    return float(0.6 * angle_stability + 0.3 * angular_velocity_component + 0.1 * position_centering)
 """
 
     efficiencyFunc = """
 def energyEfficiencyReward(observation, action):
     x, xDot, angle, angleDot = observation
-    cart_movement_penalty = -abs(xDot) / 5.0
-    angular_movement_penalty = -abs(angleDot) / 5.0
-    return float(1.0 + cart_movement_penalty + angular_movement_penalty)
-"""
-
-    timeFunc = """
-def timeBasedReward(observation, action):
-    x, xDot, angle, angleDot = observation
+    # Base survival reward
     base_reward = 1.0
+    
+    # Energy efficiency component
+    movement_penalty = -(abs(xDot) + abs(angleDot)) / 10.0
+    
+    # Failure conditions
     if abs(angle) > 0.209 or abs(x) > 2.4:
         base_reward = 0.0
-    return float(base_reward)
+    
+    return float(0.7 * base_reward + 0.3 * movement_penalty)
 """
     return {
         'stability': stabilityFunc,
-        'efficiency': efficiencyFunc,
-        'time': timeFunc
+        'efficiency': efficiencyFunc
     }
 
+# Initialize the base functions by executing their strings
+initial_funcs = {}
+namespace = {}
+function_defs = createDynamicFunctions()
+exec(function_defs['stability'], namespace)
+exec(function_defs['efficiency'], namespace)
 
-from AdaptiveRewardFunctionLearning.RewardGeneration.rewardCritic import RewardUpdateSystem
+# Export the initialized functions
+stabilityReward = namespace['stabilityReward']
+efficiencyReward = namespace['energyEfficiencyReward']
 
 def dynamicRewardFunction(observation, action, metrics=None):
-    # Initialize weights and function tracking if not exist
+    # Initialize weights if not exist
     if not hasattr(dynamicRewardFunction, 'weights'):
         dynamicRewardFunction.weights = {
-            'stability': {'value': 0.33, 'lastUpdate': 0},
-            'efficiency': {'value': 0.33, 'lastUpdate': 0},
-            'time': {'value': 0.34, 'lastUpdate': 0}
+            'stability': {'value': 0.6, 'lastUpdate': 0},
+            'efficiency': {'value': 0.4, 'lastUpdate': 0}
         }
         dynamicRewardFunction.function_updates = {}
         dynamicRewardFunction.lastObservation = observation
@@ -89,34 +73,25 @@ def dynamicRewardFunction(observation, action, metrics=None):
                 functionStrings['stability'] = new_code
             elif func_name.startswith('rewardFunction2'):
                 functionStrings['efficiency'] = new_code
-            elif func_name.startswith('rewardFunction3'):
-                functionStrings['time'] = new_code
     
     # Create namespace and execute the functions
     namespace = {}
     exec(functionStrings['stability'], namespace)
     exec(functionStrings['efficiency'], namespace)
-    exec(functionStrings['time'], namespace)
     
     # Get rewards using potentially updated functions
     stability = namespace['stabilityReward'](observation, action)
-    efficiency = namespace['energyEfficiencyReward'](observation, action)
-    timeReward = namespace['timeBasedReward'](observation, action)
+    efficiency = namespace['efficiencyReward'](observation, action)
     
     # Combine rewards with current weights
     reward = (stability * dynamicRewardFunction.weights['stability']['value'] + 
-             efficiency * dynamicRewardFunction.weights['efficiency']['value'] + 
-             timeReward * dynamicRewardFunction.weights['time']['value'])
+             efficiency * dynamicRewardFunction.weights['efficiency']['value'])
     
     return reward
 
-
-
-
-
 def analyseFailure(lastObservation):
     if lastObservation is None:
-        return 'timeout'  # or some default failure type
+        return 'timeout'
     x, xDot, angle, angleDot = lastObservation
     
     if abs(x) > 2.4:  # Position failure
@@ -130,38 +105,29 @@ def analyseFailure(lastObservation):
 def adjustWeightsAfterEpisode(weights, failureType):
     weightChanges = {
         'stability': 0.0,
-        'efficiency': 0.0,
-        'time': 0.0
+        'efficiency': 0.0
     }
     
-    # Adjust based on failure type
-    if failureType == 'angle':  # Failed due to angle > 12 degrees (0.209 radians)
-        # Increase stability weight, slightly decrease others
-        weightChanges['stability'] = +0.15  # Significant increase for angle stability
-        weightChanges['efficiency'] = -0.1  # Reduce efficiency priority
-        weightChanges['time'] = -0.05      # Small reduction in time priority
+    # More aggressive weight adjustments for faster adaptation
+    if failureType == 'angle':  # Failed due to angle > 12 degrees
+        weightChanges['stability'] = +0.2
+        weightChanges['efficiency'] = -0.2
         
-    elif failureType == 'position':  # Failed due to cart position > 2.4
-        # Need more stability and efficiency
-        weightChanges['stability'] = +0.1   # More stability helps position indirectly
-        weightChanges['efficiency'] = +0.1  # More efficiency reduces wild movements
-        weightChanges['time'] = -0.2       # Reduce time priority significantly
+    elif failureType == 'position':  # Failed due to cart position
+        weightChanges['stability'] = +0.1
+        weightChanges['efficiency'] = -0.1
         
-    elif failureType == 'velocity':  # Failed due to too much speed
-        # Need more efficiency focus
-        weightChanges['efficiency'] = +0.15  # Significant increase for movement efficiency
-        weightChanges['stability'] = -0.1    # Reduce stability priority
-        weightChanges['time'] = -0.05       # Small reduction in time priority
+    elif failureType == 'velocity':  # Failed due to excessive speed
+        weightChanges['efficiency'] = +0.2
+        weightChanges['stability'] = -0.2
         
     elif failureType == 'timeout':  # Succeeded until max steps
-        # Reward successful behavior
-        weightChanges['time'] = +0.1        # Increase time weight as it's doing well
-        weightChanges['efficiency'] = +0.05  # Slight increase in efficiency
-        weightChanges['stability'] = -0.15   # Can reduce stability focus
+        weightChanges['efficiency'] = +0.1
+        weightChanges['stability'] = -0.1
     
-    # Apply changes with bounds (prevent any weight from going too high or low)
+    # Apply changes with bounds (prevent any weight from going below 0.2 or above 0.8)
     for key in weights:
-        weights[key] = max(0.1, min(0.8, weights[key] + weightChanges[key]))
+        weights[key] = max(0.2, min(0.8, weights[key] + weightChanges[key]))
     
     # Normalize weights to ensure they sum to 1
     total = sum(weights.values())
@@ -170,23 +136,16 @@ def adjustWeightsAfterEpisode(weights, failureType):
     
     return weights
 
-
 def updateComponentWeight(component, failureType):
     # Update logic specific to each component
     if component == 'stability':
         if failureType == 'angle':
-            dynamicRewardFunction.weights[component]['value'] += 0.1
+            dynamicRewardFunction.weights[component]['value'] += 0.2
     elif component == 'efficiency':
         if failureType == 'velocity':
-            dynamicRewardFunction.weights[component]['value'] += 0.1
-    elif component == 'time':
-        if failureType == 'timeout':
-            dynamicRewardFunction.weights[component]['value'] += 0.1
+            dynamicRewardFunction.weights[component]['value'] += 0.2
             
     # Normalize weights after update
     total = sum(w['value'] for w in dynamicRewardFunction.weights.values())
     for w in dynamicRewardFunction.weights.values():
         w['value'] /= total
-
-
-
