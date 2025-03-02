@@ -9,37 +9,36 @@ def createDynamicFunctions():
     stabilityFunc = """
 def stabilityReward(observation, action):
     x, xDot, angle, angleDot = observation
-    # Focus purely on angle stability
-    angle_stability = 1.0 - abs(angle) / 0.209  # Normalized angle deviation
     
-    # Add a smaller component for angular velocity to prevent wild swinging
-    angular_velocity_component = -abs(angleDot) / 8.0
+    # Primary component: angle-based reward (higher when pole is upright)
+    angle_reward = 1.0 - (abs(angle) / 0.209)  # Normalize to [0, 1]
     
-    # Small position centering component
-    position_centering = -abs(x) / 4.8  # 4.8 is 2x the failure threshold
+    # Secondary component: angular velocity penalty (smaller is better)
+    velocity_penalty = min(0.5, abs(angleDot) / 8.0)  # Cap at 0.5
     
-    return float(0.6 * angle_stability + 0.3 * angular_velocity_component + 0.1 * position_centering)
+    # Combine components
+    return float(angle_reward - velocity_penalty)
 """
 
     efficiencyFunc = """
 def energyEfficiencyReward(observation, action):
     x, xDot, angle, angleDot = observation
-    # Base survival reward
-    base_reward = 1.0
     
-    # Energy efficiency component
-    movement_penalty = -(abs(xDot) + abs(angleDot)) / 10.0
+    # Primary component: position-based reward (higher when cart is centered)
+    position_reward = 1.0 - (abs(x) / 2.4)  # Normalize to [0, 1]
     
-    # Failure conditions
-    if abs(angle) > 0.209 or abs(x) > 2.4:
-        base_reward = 0.0
+    # Secondary component: velocity penalty (smaller is better)
+    velocity_penalty = min(0.5, abs(xDot) / 5.0)  # Cap at 0.5
     
-    return float(0.7 * base_reward + 0.3 * movement_penalty)
+    # Combine components
+    return float(position_reward - velocity_penalty)
 """
     return {
         'stability': stabilityFunc,
         'efficiency': efficiencyFunc
     }
+
+    
 
 # Initialize the base functions by executing their strings
 initial_funcs = {}

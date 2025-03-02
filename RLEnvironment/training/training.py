@@ -1,6 +1,7 @@
 from collections import deque
 import numpy as np
 
+
 def trainDQLearning(agent, env, numEpisodes, updateSystem=None, onEpisodeEnd=None):
     rewards = []
     episodeLengths = []
@@ -21,23 +22,19 @@ def trainDQLearning(agent, env, numEpisodes, updateSystem=None, onEpisodeEnd=Non
             agent.remember(observation, action, reward, nextObservation, done)
             observation = nextObservation
             
+            # Train less frequently - every 4 steps if enough samples
+            if len(agent.memory) > agent.batchSize and steps % 4 == 0:
+                agent.replay()
+        
         rewards.append(totalReward)
         episodeLengths.append(steps)
         
-        # Only use onEpisodeEnd for all update logic
         if onEpisodeEnd:
             onEpisodeEnd(env, updateSystem, episode, totalReward, steps)
         
-        # Regular training step
-        if len(agent.memory) > 32:
-            agent.replay(32)
-        
-        # Periodic logging
-        if episode % 100 == 0:
-            avgReward = np.mean(rewards[-100:]) if rewards else 0
-            avgSteps = np.mean(episodeLengths[-100:]) if episodeLengths else 0
-            print(f"\nEpisode {episode}/{numEpisodes}")
-            print(f"Average Reward: {avgReward:.2f}")
-            print(f"Average Steps: {avgSteps:.2f}")
+        # Ensure at least one training update per episode
+        if len(agent.memory) > agent.batchSize:
+            agent.replay()
     
     return agent, env, rewards
+

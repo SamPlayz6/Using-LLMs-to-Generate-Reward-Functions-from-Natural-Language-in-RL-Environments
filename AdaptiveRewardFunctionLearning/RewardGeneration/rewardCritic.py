@@ -111,7 +111,17 @@ class RewardUpdateSystem:
             "role": "user",
             "content": f"""Analyze this {componentType} reward component function and its performance metrics.
             
-            IMPORTANT: Make conservative, incremental improvements. Avoid dramatic changes.
+            IMPORTANT CONSTRAINTS:
+            1. The function MUST have signature: def reward_function(observation, action)
+            2. The state variables available in 'observation' are:
+               - observation[0]: Cart Position
+               - observation[1]: Cart Velocity
+               - observation[2]: Pole Angle
+               - observation[3]: Pole Angular Velocity
+            3. The 'action' is a SCALAR (not a list) with value 0 or 1
+            4. DO NOT reference 'next_state' or any variables not in these lists
+            5. Keep the function SIMPLE with MAX 3 components
+            6. Avoid excessive scaling factors
             
             Current Function:
             {currentFunction}
@@ -120,15 +130,11 @@ class RewardUpdateSystem:
             - Average Reward: {np.mean(recentRewards) if recentRewards else 'No data'}
             - Historical Best: {self.bestPerformance if self.bestPerformance != float('-inf') else 'No data'}
             
-            Previous Updates Performance:
-            {self._format_performance_history()}
-            
             Requirements:
-            1. Keep successful elements of the current function
-            2. Make small, targeted improvements
-            3. Maintain the core reward structure
-            4. Focus on {componentType} aspects
-            5. Include detailed inline comments explaining changes
+            1. Make only SMALL, incremental improvements
+            2. Focus on {componentType} aspects
+            3. Include detailed inline comments
+            4. VERIFY the function only uses observation and action as per constraints
             
             Output only the modified function with detailed inline comments."""
         }]
@@ -248,7 +254,7 @@ class RewardUpdateSystem:
         print("-" * 50)
 
     def waitingTime(self, componentName, metrics, lastUpdateEpisode):
-        """Improved waiting time logic with performance checks"""
+        """Improved waiting time logic with performance checks and freezing"""
         currentEpisode = metrics['currentEpisode']
         timeSinceUpdate = currentEpisode - lastUpdateEpisode
         
@@ -271,6 +277,11 @@ class RewardUpdateSystem:
             'performance': current_performance,
             'best': historical_best
         })
+        
+        # NEW: Performance freezing - If current performance is good, don't update
+        if current_performance > 0.8 * historical_best:
+            print(f"\nMaintaining good performance for {componentName}: {current_performance:.2f} vs best {historical_best:.2f}")
+            return False
         
         # Check for significant performance degradation
         if current_performance < 0.5 * historical_best:
