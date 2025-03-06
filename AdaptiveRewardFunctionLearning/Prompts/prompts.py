@@ -1,5 +1,5 @@
 import torch
-apiKey = "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"
+apiKey = "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"
 modelName = "claude-3-5-sonnet-20240620"
 
 # Set device to GPU if available

@@ -280,7 +280,7 @@ class RewardUpdateSystem:
         
         # NEW: Performance freezing - If current performance is good, don't update
         if current_performance > 0.8 * historical_best:
-            print(f"\nMaintaining good performance for {componentName}: {current_performance:.2f} vs best {historical_best:.2f}")
+            # print(f"\nMaintaining good performance for {componentName}: {current_performance:.2f} vs best {historical_best:.2f}")
             return False
         
         # Check for significant performance degradation
