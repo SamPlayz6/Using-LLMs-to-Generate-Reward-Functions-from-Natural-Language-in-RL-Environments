@@ -12,14 +12,14 @@ import random
 
 class DQLearningAgent:
     def __init__(self, env, stateSize, actionSize, device, 
-                 learningRate=0.0005,  # Reduced from 0.001
+                 learningRate=0.0003,  # Further reduced learning rate for stability
                  discountFactor=0.99, 
                  epsilon=1.0, 
-                 epsilonDecay=0.999,  # Slower decay
-                 epsilonMin=0.01,
+                 epsilonDecay=0.9995,  # Even slower decay to prevent premature exploitation
+                 epsilonMin=0.05,  # Higher minimum exploration rate
                  replayBufferSize=100000,
-                 batchSize=32,  # Back to original
-                 targetUpdateFreq=200):  # Much less frequent updates
+                 batchSize=64,  # Larger batch size for more stable updates
+                 targetUpdateFreq=500):  # Less frequent target updates for stability
         
         self.env = env
         self.stateSize = stateSize
@@ -100,18 +100,24 @@ class DQLearningAgent:
         loss = self.lossFunction(currentQValues.squeeze(), targetQValues)
         self.optimizer.zero_grad()
         loss.backward()
-        # Gradient clipping to prevent exploding gradients
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        # Stronger gradient clipping to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=0.5)
         self.optimizer.step()
 
         self.trainingSteps += 1
 
-        # Update target network less frequently
+        # Update target network less frequently for stability
         if self.trainingSteps % self.targetUpdateFreq == 0:
-            self.targetModel.load_state_dict(self.model.state_dict())
+            # Use soft update instead of hard update for more stability
+            with torch.no_grad():
+                for target_param, param in zip(self.targetModel.parameters(), self.model.parameters()):
+                    target_param.data.copy_(0.005 * param.data + 0.995 * target_param.data)
 
-        # Update exploration rate
+        # More conservative epsilon decay, slow down as epsilon gets smaller
         if self.epsilon > self.epsilonMin:
-            self.epsilon *= self.epsilonDecay
+            # Decay more slowly as we approach the minimum
+            decay_factor = self.epsilonDecay + 0.0001 * (1 - self.epsilon/1.0)
+            self.epsilon *= decay_factor
+            self.epsilon = max(self.epsilonMin, self.epsilon)  # Ensure we don't go below minimum
 
 
