@@ -1,0 +1,22 @@
+Reward Approach,Metric,Environment 1,Environment 2,Overall Average
+adaptivereward,Average Reward,150,3500,1825
+energy_based,Average Reward,10,12,11
+baseline,Average Reward,10,11,10.5
+pbrs,Average Reward,10,13,11.5
+adaptivereward,Relative Performance vs Energy-based (%),680,29000,14840
+adaptivereward,Relative Performance vs Baseline (%),640,31800,16220
+adaptivereward,Relative Performance vs PBRS (%),650,26900,13780
+
+Reward Value Peaks (from Reward-Over-Time graphs)
+Reward Approach,Run 1 Peak,Run 2 Peak,Run 4 Peak,Average Peak
+adaptivereward,9200,9300,8700,9067
+energy_based,15,15,15,15
+baseline,15,15,15,15
+pbrs,15,15,15,15
+
+Adaptation Metrics
+Reward Approach,Recovery Time (episodes),Performance Drop (%),Run 1 Recovery,Run 2 Recovery,Run 4 Recovery
+adaptivereward,2.00 ± 2.99,3.49 ± 6.84,1.0,0.0,5.0
+energy_based,5.33 ± 10.45,5.22 ± 6.42,0.0,16.0,0.0
+baseline,13.33 ± 24.20,5.52 ± 10.75,38.0,2.0,0.0
+pbrs,0.33 ± 0.65,4.02 ± 4.63,0.0,1.0,0.0

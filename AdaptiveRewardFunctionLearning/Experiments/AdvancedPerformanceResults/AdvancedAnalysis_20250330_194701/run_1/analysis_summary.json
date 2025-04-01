@@ -1,0 +1,39 @@
+{
+  "statistical_results": {
+    "reward": {
+      "anova_p_value": 0.0,
+      "anova_significant": true,
+      "pairwise_significant": {
+        "adaptivereward vs energy_based": true,
+        "adaptivereward vs baseline": true,
+        "adaptivereward vs pbrs": true,
+        "energy_based vs baseline": false,
+        "energy_based vs pbrs": true,
+        "baseline vs pbrs": true
+      }
+    },
+    "balance_time": {
+      "anova_p_value": 0.0,
+      "anova_significant": true,
+      "pairwise_significant": {
+        "adaptivereward vs energy_based": true,
+        "adaptivereward vs baseline": true,
+        "adaptivereward vs pbrs": true,
+        "energy_based vs baseline": false,
+        "energy_based vs pbrs": true,
+        "baseline vs pbrs": true
+      }
+    }
+  },
+  "adaptation_metrics": {
+    "adaptivereward": {
+      "avg_recovery_time": 0.0,
+      "avg_performance_drop": 0.0
+    },
+    "energy_based": {
+      "avg_recovery_time": 0.0,
+      "avg_performance_drop": 0.0
+    },
+    "baseline": {
+      "avg_recovery_time": 0.0,
+      "avg_performance_drop": 

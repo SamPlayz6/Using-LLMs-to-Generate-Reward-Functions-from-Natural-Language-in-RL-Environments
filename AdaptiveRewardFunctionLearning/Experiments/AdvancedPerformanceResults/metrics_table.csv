@@ -1,0 +1,26 @@
+Reward Approach,Metric,Mean,95% CI,Raw Values (Run 1),Raw Values (Run 2),Raw Values (Run 3)
+adaptivereward,Recovery Time (episodes),2.00,±2.99,1.0,0.0,5.0
+adaptivereward,Performance Drop (%),3.49,±6.84,10.48,0.0,0.0
+energy_based,Recovery Time (episodes),5.33,±10.45,0.0,16.0,0.0
+energy_based,Performance Drop (%),5.22,±6.42,4.41,11.26,0.0
+baseline,Recovery Time (episodes),13.33,±24.20,38.0,2.0,0.0
+baseline,Performance Drop (%),5.52,±10.75,16.49,0.08,0.0
+pbrs,Recovery Time (episodes),0.33,±0.65,0.0,1.0,0.0
+pbrs,Performance Drop (%),4.02,±4.63,3.87,0.0,8.18
+
+Environment Performance
+Reward Approach,Best Environment Count,Notes
+adaptivereward,6,"Ranked #1 in all environments across all runs"
+energy_based,0,"Never ranked #1"
+baseline,0,"Never ranked #1"
+pbrs,0,"Never ranked #1"
+
+Statistical Significance (Reward)
+Comparison,Significant Runs,Total Runs
+ANOVA,2,3
+adaptivereward vs energy_based,3,3
+adaptivereward vs baseline,3,3
+adaptivereward vs pbrs,3,3
+energy_based vs baseline,3,3
+energy_based vs pbrs,3,3
+baseline vs pbrs,2,3
